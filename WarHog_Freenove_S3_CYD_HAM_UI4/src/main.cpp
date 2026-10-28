@@ -69,7 +69,7 @@ static bool initSd() {
     return false;
   }
 
-  if (!SD_MMC.begin("/sdcard", false, false, 20000000, 8)) {
+  if (!SD_MMC.begin("/sdcard", false, false, 20000, 8)) {
     Serial.println("[SD] SD_MMC mount failed");
     return false;
   }
