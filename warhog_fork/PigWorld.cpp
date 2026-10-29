@@ -87,7 +87,13 @@ static float lastLng = 0;
 static Sky skyNow() {
   if (gpsHasFix && gps.location.isValid()) { lastLng = gps.location.lng(); haveLng = true; }
   time_t now = time(nullptr);
-  Sky s = {10.0f, 0.5f, false};                      // no clock or position yet: a morning sun
+  static float bootHour = -1.0f;
+  static float bootMoon = 0.5f;
+  if (bootHour < 0.0f) {
+    bootHour = rnd(240) / 10.0f;                    // random solar time until GPS time locks
+    bootMoon = rndf();
+  }
+  Sky s = {bootHour, bootMoon, bootHour < 6.0f || bootHour >= 18.0f};
   if (now < 1600000000 || !haveLng) return s;
   s.hour  = fmodf((now % 86400) / 3600.0f + lastLng / 15.0f + 48.0f, 24.0f);
   s.moon  = (float)fmod((now / 86400.0 - 10962.76) / 29.530588853, 1.0);   // from the new moon of 2000-01-06 18:14 UTC
@@ -629,6 +635,7 @@ static void worldFrame() {
   static uint8_t  lastMode = 0xFF;
   static int      x = 24, dir = 1, lastN = 1;
   static int32_t  gx = 0;
+  static bool     worldSeeded = false;
   static uint8_t  act = PA_WALK;
   static uint16_t actT = 0, walkT = 0;
   static uint32_t nextSniff = 0, nextTurn = 0, nextDig = 0;
@@ -639,6 +646,12 @@ static void worldFrame() {
   static uint32_t lastFrameMs = 0, milestone = 0, newNets = 0;
   static uint8_t  lastSrc = 0xFF, gallop = 0;
   uint32_t now = millis();
+
+  if (!worldSeeded) {
+    worldSeeded = true;
+    gx  = rnd(100000);
+    dir = (esp_random() & 1) ? 1 : -1;
+  }
 
   // ---- read WarHog's state ----
   const bool core = meshCoreActive, node = meshNodeActive && !core;
@@ -668,8 +681,10 @@ static void worldFrame() {
   if (count / step > milestone) { milestone = count / step; launchShow(5); cheer = true; }
   if (celebrateReq) { celebrateReq = false; launchShow(6); cheer = true; }
 
-  bool searching = core ? coreNodeCount == 0 : node ? !jcmkHaveCore : (allowScanForOled && !gpsHasFix);
-  bool paused    = !core && !node && !allowScanForOled;
+  // In Solo wardriving mode (!core && !node), always run the animated PigWorld
+  // scene (PM_TROT) unless scanning was explicitly paused by the user.
+  bool searching = core ? coreNodeCount == 0 : node ? !jcmkHaveCore : false;
+  bool paused    = !core && !node && (!scanningEnabled || statusPagePaused || currentPage == 3);
 
   // ---- speed from GPS: trot on foot, gallop in a car (level 1 from 12 km/h, 2 from 50, with some hysteresis) ----
   {
@@ -744,16 +759,17 @@ static void worldFrame() {
   if (cheer && !searching) { partyOn = true; partyK = 0; act = PA_WALK; lastWakeMs = now; }
   lastN = n;
 
+  bool canSleep = (core || node) ? (now - max(lastNewMs, lastWakeMs) > 60000) : false;
   uint8_t mode = searching ? PM_SEARCH
-               : (!partyOn && (paused || now - max(lastNewMs, lastWakeMs) > 60000) && !hopPending) ? PM_SLEEP
+               : (!partyOn && (paused || canSleep) && !hopPending) ? PM_SLEEP
                : PM_TROT;
   if (mode != lastMode) {
-    lastMode = mode; t = 0; nextJoin = 0; act = PA_WALK; actT = 0; dir = 1;
+    lastMode = mode; t = 0; nextJoin = 0; act = PA_WALK; actT = 0;
     if (mode != PM_TROT) partyOn = false;
-    x = (mode == PM_TROT) ? 24 : (SW - W) / 2;
-    nextSniff = 120 + rnd(80);
-    nextTurn  = 300 + rnd(200);
-    nextDig   = 600 + rnd(600);
+    x = (mode == PM_TROT) ? (dir > 0 ? 24 : SW - W - 24) : (SW - W) / 2;
+    nextSniff = 60 + rnd(80);
+    nextTurn  = 180 + rnd(200);
+    nextDig   = 240 + rnd(360);
   }
   t++;
 

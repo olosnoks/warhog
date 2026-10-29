@@ -142,6 +142,11 @@ void cfgAssignKV(const String& k, const String& v) {
     String vv = v; vv.toLowerCase();
     cfg.blePhoneSolo = (vv == "true" || vv == "1");
   }
+  else if (k == "blePersonality") {
+    String vv = v; vv.toLowerCase();
+    if (vv == "wardrivego" || vv == "iosesp") cfg.blePersonality = "wardrivego";
+    else if (vv == "biscuit")                 cfg.blePersonality = "biscuit";
+  }
   else if (k == "sdMaxSpiHz") {
     long hz = v.toInt();
     if (hz >= 400000 && hz <= 40000000) cfg.sdMaxSpiHz = (uint32_t)hz;  // sanity-clamp to a plausible SPI range
@@ -150,7 +155,7 @@ void cfgAssignKV(const String& k, const String& v) {
     // Keys are ssidWhitelist1..ssidWhitelist10 (1-indexed in the file/UI,
     // 0-indexed in the array). Assign unconditionally -- including empty
     // strings -- so a slot can be cleared by saving it blank from the Web UI.
-      int idx = k.substring(13).toInt();  // strlen("ssidWhitelist") == 13
+    int idx = k.substring(13).toInt();  // strlen("ssidWhitelist") == 13
     if (idx >= 1 && idx <= 10) cfg.ssidWhitelist[idx - 1] = v;
   }
 }
@@ -340,10 +345,13 @@ bool saveConfigToSD() {
   f.print("uploadOnNetworkSeen="); f.println(cfg.uploadOnNetworkSeen ? "true" : "false");
 
   f.println("");
-  f.println("# Stream this device's own scan results to the phone app over BLE while SOLO");
-  f.println("# wardriving (mesh Core mode always streams). false = BLE stays off in solo");
-  f.println("# mode, freeing the BT controller RAM. Default: true.");
+  f.println("# Stream this device's scan results to the phone app over BLE while in SOLO");
+  f.println("# and Mesh Node modes (mesh Core mode always streams). Default: true.");
   f.print("blePhoneSolo="); f.println(cfg.blePhoneSolo ? "true" : "false");
+
+  f.println("");
+  f.println("# BLE companion app personality: wardrivego (default, iosESP-XXXX) or biscuit.");
+  f.print("blePersonality="); f.println(cfg.blePersonality);
 
   f.println("");
   f.println("# SD-over-SPI clock ceiling in Hz. Boot negotiates the fastest speed up to");

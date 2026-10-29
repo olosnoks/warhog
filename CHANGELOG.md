@@ -7,6 +7,16 @@ the base firmware history.
 
 ## Unreleased
 
+### Wardrive Go (`iosESP-XXXX`) bridge + solo PigWorld defaults on XIAO C5 (`warhog_fork`)
+- **Wardrive Go support across Solo, Mesh Node, and Mesh Core modes.** Added `IosEspCompat`
+  (`iosESP-XXXX` GATT service + primary UUID advertising, disconnect/stop-advertising handling so
+  iOS does not drop with reason 531) alongside Biscuit Manager (`blePersonality=wardrivego` default,
+  configurable in `wardriver.cfg` and the Web UI). Scans and GPS stream over BLE in Solo, Node, and
+  Core modes, including a lightweight ch-6 self-scan when in lone-Core mode with no linked nodes.
+- **Boot straight into animated PigWorld in Solo wardriving mode.** Default `meshModeOnBoot` is now
+  `none` (Solo mode on page 4 with randomized PigWorld terrain/sky and active scanning even while
+  the SoftAP window is idle or without an SD card / GPS fix).
+
 ### Fix the Wardrive Go phone bridge and settings persistence (CYD/W550)
 - **Wardrive Go couldn't see the Core.** The iosESP/GhostESP bridge was advertising as
   `WarHog-XXXX` (a `Piglet-XXXX` branding from before, then caught by the WarHog rename), but
@@ -20,6 +30,11 @@ the base firmware history.
 - **Settings UX:** the phone-app selector is renamed *CORE BLE APP* → *CORE PHONE APP* and the
   `BISCUIT REPORT` hint clarified, so it's no longer confused with the phone app — `biscuitReport`
   is ESP-NOW forwarding to a separate Biscuit coordinator, `blePersonality` is the phone app.
+- **Reboot-flagged choices now auto-apply.** Changing a REBOOT-marked choice (CORE PHONE APP,
+  MESH MODE ON BOOT) reboots immediately so the change takes effect cleanly — for the phone app
+  that means the device comes back advertising exactly one protocol (Biscuit *or* Wardrive Go),
+  no lingering bridge. It only auto-reboots if the save persisted; a failed save shows
+  "Last save FAILED" and does not reboot, so the change isn't lost.
 
 ### Update mesh nodes over the air from the CYD Core
 New ESP-NOW messages `PIG_MSG_OTA_BEGIN/DATA/ACK` (0x25–0x27) let the Core stream a node's

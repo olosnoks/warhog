@@ -110,7 +110,9 @@ void startAP() {
   WiFi.mode(WIFI_OFF);
   delay(200);
 
-  WiFi.mode(WIFI_AP);
+  // Use WIFI_AP_STA so solo wardriving scans can begin immediately while the
+  // SoftAP is idle (no WebUI client connected yet).
+  WiFi.mode(WIFI_AP_STA);
   delay(100);
 
   // WPA2 PSK must be >= 8 chars; otherwise start OPEN AP
@@ -141,7 +143,7 @@ void startAP() {
 
 bool connectSTA(uint32_t timeoutMs) {
   Serial.println("[WIFI] STA connect attempt...");
-  if (cfg.homeSsid.length() == 0) {
+  if (cfg.homeSsid.length() == 0 || cfg.homeSsid == "EnterWifiHere") {
     Serial.println("[WIFI] No home SSID in config");
     return false;
   }
@@ -246,8 +248,9 @@ bool shouldPauseScanning() {
   if (WiFi.status() == WL_CONNECTED) return true;
 
   wifi_mode_t m = WiFi.getMode();
-  if (m == WIFI_AP || m == WIFI_AP_STA) {
-    return true; // pause anytime AP is up
+  if ((m == WIFI_AP || m == WIFI_AP_STA) &&
+      apWindowActive && (apClientSeen || WiFi.softAPgetStationNum() > 0)) {
+    return true; // pause when a client is actively using the SoftAP WebUI
   }
   return false;
 }

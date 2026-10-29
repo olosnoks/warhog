@@ -444,7 +444,7 @@ void setup() {
     String mm = cfg.meshModeOnBoot; mm.toLowerCase();
     bool coreBoot    = (mm == "core");
     bool nodeBoot    = (mm == "node");
-    bool hasHomeSsid = (cfg.homeSsid.length() > 0);
+    bool hasHomeSsid = (cfg.homeSsid.length() > 0 && cfg.homeSsid != "EnterWifiHere");
 
     if (nodeBoot) {
       // Node mode always skips STA/AP — go straight to mesh.
@@ -475,8 +475,8 @@ void setup() {
   // Boot upload: WDGoWars first (if key set), then WiGLE (if token set),
   // then move files. Requires STA connection and SD card.
   {
-    bool hasWigle = cfg.wigleBasicToken.length() > 0;
-    bool hasWdg   = cfg.wdgwarsApiKey.length()   > 0;
+    bool hasWigle = cfg.wigleBasicToken.length() > 0 && cfg.wigleBasicToken != "EnterWigleTokenForUseTokenHere";
+    bool hasWdg   = cfg.wdgwarsApiKey.length()   > 0 && cfg.wdgwarsApiKey   != "EnterWatchDogsGoAPITokenHere";
 
     if (staOk && sdOk && (hasWigle || hasWdg)) {
       Serial.print("[UPLOAD] STA connected. Services: ");
@@ -571,6 +571,7 @@ void setup() {
       Serial.println("[BOOT] meshModeOnBoot=Node — entering Mesh Node mode");
       currentPage = 5;  // mesh page on XIAO
       enterNodeMode();
+      if (cfg.blePhoneSolo && !bleBridgeActive()) bleBridgeBegin();
       pigWorldTakePress();  // default screen = the PigWorld scene on the mesh page
     } else if (mm == "core") {
       // Tear down STA cleanly before entering Core — the STA connection
@@ -595,12 +596,18 @@ void setup() {
       // on the Pig page, just as the mesh modes do. The scene's solo branch shows
       // the wardrive pig with the 2.4G+5G network counter; scanning runs on page 4
       // exactly as on the other wardrive pages, so the scene animates live.
+      Serial.println("[BOOT] meshModeOnBoot=None — entering Solo wardriving mode on PigWorld");
       currentPage = 4;
+      if (cfg.blePhoneSolo && !bleBridgeActive()) bleBridgeBegin();
       pigWorldTakePress();
     }
   }
 
-  updateOLED(0);
+  if (pigWorldActive()) {
+    pigWorldTick();
+  } else {
+    updateOLED(0);
+  }
 
   // Arm the button boot-settle guard now, right as loop() is about to start —
   // this is when any lingering post-flash GPIO0 noise would otherwise be
@@ -620,7 +627,7 @@ void loop() {
   // Track AP client presence and enforce AP window. The window does NOT
   // auto-extend on connect; the user must click "Stay" in the WebUI prompt
   // to push it out to the 5 min budget.
-  if (apWindowActive && WiFi.getMode() == WIFI_AP_STA) {
+  if (apWindowActive && (WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA)) {
     if (WiFi.softAPgetStationNum() > 0) {
       if (!apClientSeen) {
         Serial.println("[WIFI] AP client connected");
@@ -767,10 +774,14 @@ void loop() {
       coreModeTick();
     }
   } else if (meshNodeActive) {
-    // A node's radio belongs to ESP-NOW; per the BLE ownership rules no other
-    // module may hold the stack while a mesh role is live, so a bridge left up
-    // by a previous solo session comes down here.
-    if (bleBridgeActive()) bleBridgeStop();
+    // Keep the BLE phone bridge up in Mesh Node mode as well so Wardrive Go
+    // receives this node's scans and GPS in every mode (Solo, Node, and Core).
+    if (cfg.blePhoneSolo) {
+      if (!bleBridgeActive()) bleBridgeBegin();
+      bleBridgeTick();
+    } else if (bleBridgeActive()) {
+      bleBridgeStop();
+    }
     nodeModeTick();
   } else {
     // Solo wardriving: keep the phone bridge up so the app sees THIS device's
@@ -787,7 +798,9 @@ void loop() {
 
     autoPaused = shouldPauseScanning();
     wifi_mode_t m = WiFi.getMode();
-    bool apActive = (m == WIFI_AP || m == WIFI_AP_STA);
+    bool apActive = ((m == WIFI_AP || m == WIFI_AP_STA) &&
+                     apWindowActive &&
+                     (apClientSeen || WiFi.softAPgetStationNum() > 0));
 
     bool allowScan;
     if (currentPage == 3) {
@@ -795,11 +808,11 @@ void loop() {
       allowScan = false;
     } else if (currentPage == 0) {
       // Status page: respect AP/STA pause + double-press pause
-      allowScan = scanningEnabled && sdOk && !statusPagePaused &&
+      allowScan = scanningEnabled && !statusPagePaused &&
                   !apActive && (userScanOverride || !autoPaused);
     } else {
       // Pages 1 (networks), 2 (nav), 4 (pig): respect AP/STA pause
-      allowScan = scanningEnabled && sdOk && !apActive && (userScanOverride || !autoPaused);
+      allowScan = scanningEnabled && !apActive && (userScanOverride || !autoPaused);
     }
     allowScanForOled = allowScan;
 
