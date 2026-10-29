@@ -6,7 +6,6 @@
 <title>Piglet Web Flasher</title>
 <meta name="description" content="Flash the official Piglet wardriving firmware to your ESP32-C5 board straight from the browser.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1f437;</text></svg>">
-<script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
 <style>
   *,*::before,*::after{box-sizing:border-box}
   :root{
@@ -65,7 +64,6 @@
     font:600 14px system-ui,sans-serif;transition:filter .1s;
   }
   button.flash:hover{filter:brightness(1.08)} button.flash:active{transform:translateY(1px)}
-  esp-web-install-button{--esp-tools-button-color:transparent;display:block}
   .unsupported{color:var(--danger);font-size:12px}
 
   .alt{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;margin-top:12px}
@@ -112,20 +110,16 @@
     <div class="chips" id="chips"></div>
     <p class="desc" id="desc"></p>
 
-    <esp-web-install-button id="installer">
-      <button class="flash" slot="activate">&#9654; Install</button>
-      <span slot="unsupported" class="unsupported">Open in Chrome or Edge (desktop) to flash.</span>
-    </esp-web-install-button>
+    <button type="button" class="flash" id="installer" data-c5flash>&#9654; Install</button>
 
     <div class="alt">
       <a id="dl" href="#" download>Download .bin</a>
       <a id="mf" href="#">View manifest</a>
     </div>
 
-    <details open>
+    <details>
       <summary>C5 note &mdash; flash from a terminal if the browser fails</summary>
-<pre><span class="c"># The ESP32-C5 USB-Serial/JTAG can drop</span>
-<span class="c"># when the browser loads the flash stub.</span>
+<pre><span class="c"># The Install button flashes in ROM (--no-stub) mode.</span>
 <span class="c"># If Install fails, flash with esptool:</span>
 esptool --chip esp32c5 --no-stub \
   write-flash 0x0 <span id="cmdbin">Piglet.ino.merged.bin</span></pre>
@@ -139,10 +133,6 @@ esptool --chip esp32c5 --no-stub \
   </footer>
 
 <script>
-  // Every board Ham ships a flashable release image for (Hamspiced/piglet
-  // releases/latest). All are ESP32-C5. To add a board later: ship its
-  // *.ino.merged.bin in the release, add a manifest in manifests/, and add
-  // one entry here.
   var BOARDS = [
     {
       value:    "xiao_c5",
@@ -169,7 +159,7 @@ esptool --chip esp32c5 --no-stub \
       desc:     "USB-A dongle — 0.96\" ST7735 TFT, APA102 LED, GPS, SD, dual-band."
     }
   ];
-  var RELEASE = "https://github.com/Hamspiced/piglet/releases/latest/download/";
+  var RELEASE = "../firmware/";
 
   var sel = document.getElementById("board");
   BOARDS.forEach(function(b){
@@ -186,7 +176,7 @@ esptool --chip esp32c5 --no-stub \
   var cmdbin = document.getElementById("cmdbin");
 
   function apply(b){
-    installer.setAttribute("manifest", b.manifest);
+    installer.setAttribute("data-c5bin", RELEASE + b.bin);
     chips.innerHTML = b.chips.map(function(c,i){
       return '<span class="chip'+(i===0?' a':'')+'">'+c+'</span>';
     }).join("");
@@ -202,6 +192,10 @@ esptool --chip esp32c5 --no-stub \
   });
 
   apply(BOARDS[0]); // default to the first board
+</script>
+<script type="module">
+  import { mountC5Flash } from "../c5flash.js";
+  mountC5Flash();
 </script>
 </body>
 </html>

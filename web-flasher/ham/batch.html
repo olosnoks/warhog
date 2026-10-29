@@ -110,7 +110,7 @@
         <span class="pill"><span class="dot"></span>Chrome or Edge (desktop)</span>
         <span class="pill"><span class="dot"></span>Data USB cables</span>
         <span class="pill"><span class="dot"></span>Plug in directly, no hub</span>
-        <span class="pill warn"><span class="dot"></span>C5 browser flashing is unreliable — see note</span>
+        <span class="pill"><span class="dot"></span>C5 ROM (<code>--no-stub</code>) mode</span>
       </div>
       <p class="muted" style="font-size:12.5px;margin:10px 0 0">
         Add each board (one browser prompt per board — Web Serial can't grab them all at once), pick its firmware,
@@ -151,11 +151,11 @@
 
 <script type="module">
 import { ESPLoader, Transport } from "https://unpkg.com/esptool-js@0.7.0/bundle.js";
+import { patchEspLoaderForC5, trimFlashImage } from "../c5flash.js";
 
-// Every board Piglet ships a flashable release image for — pulled straight
-// from Hamspiced/piglet's latest release. All are ESP32-C5, where browser
-// flashing can be unreliable, so each carries the c5 caution.
-const REL = "https://github.com/Hamspiced/piglet/releases/latest/download/";
+// Every board Piglet ships a flashable release image for — bundled into
+// ../firmware/ by the deploy workflow so Web Serial fetch() is same-origin.
+const REL = "../firmware/";
 const BOARDS = [
   { value:"xiao_c5",      label:"Piglet Core — XIAO ESP32-C5",  url:REL+"Piglet.ino.merged.bin",           chip:"ESP32-C5", c5:true },
   { value:"pigletnode_c5",label:"PigletNode C5 — mesh node",    url:REL+"PigletNode.ino.merged.bin",       chip:"ESP32-C5", c5:true },
@@ -224,7 +224,7 @@ function boot(BOARDS){
         '<span class="n">#'+(i+1)+' · '+portName(dev.port,i)+'</span></div>'+
         '<button class="rm" title="Remove">&times;</button></div>'+
       '<div class="pick"><select class="devBoard" aria-label="Board for this device"></select></div>'+
-      '<div class="c5">⚠ ESP32-C5: USB-Serial/JTAG can drop when the stub loads. If it fails, flash this one from a terminal with <code>--no-stub</code>.</div>'+
+      '<div class="c5">ℹ ESP32-C5: flashes in ROM (<code>--no-stub</code>) mode so USB-Serial/JTAG stays connected.</div>'+
       '<div class="bar"><i></i></div>'+
       '<div class="st"><span class="state">Ready</span><span class="pct"></span></div>'+
       '<details class="log"><summary></summary><pre></pre></details>';
@@ -303,13 +303,17 @@ function boot(BOARDS){
     let transport;
     try{
       const binP = fetchBin(board.url);           // starts (or reuses) the download
-      transport = new Transport(dev.port, true);
+      transport = new Transport(dev.port, false);
       const loader = new ESPLoader({ transport, baudrate:115200, terminal:term, debugLogging:false });
+      patchEspLoaderForC5(loader, {
+        onEraseStart: () => setState(dev, "run", "Erasing flash…"),
+      });
       const chip = await loader.main();
       setState(dev,"run","Detected "+chip+" · writing…");
-      const data = await binP;
+      const rawData = await binP;
+      const { data, address } = trimFlashImage(rawData, 0);
       await loader.writeFlash({
-        fileArray:[{ data, address:0 }],
+        fileArray:[{ data, address }],
         flashMode:"keep", flashFreq:"keep", flashSize:"keep",
         eraseAll, compress:true,
         reportProgress:(idx, written, total)=>{ setState(dev,"run","Writing…"); setPct(dev, total? written/total : 0); }

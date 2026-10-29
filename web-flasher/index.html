@@ -235,11 +235,11 @@
            data-manifest-fork="manifests/xiao_c5.json"
            data-manifest-ham="manifests/xiao_c5-ham.json"
            data-bin-fork="firmware/xiao_c5.bin"
-           data-bin-ham="https://github.com/Hamspiced/piglet/releases/latest/download/Piglet.ino.merged.bin">
+           data-bin-ham="firmware/Piglet.ino.merged.bin">
         <h2>WarHog Core &mdash; XIAO C5</h2>
         <div class="chips"><span class="chip a">ESP32-C5</span><span class="chip">8 MB</span><span class="chip">GPS</span><span class="chip">dual-band</span></div>
         <div class="screen" data-screen="warhog"></div>
-        <p class="desc">WarHog Core &mdash; GPS, SD, WiGLE logging, mesh. Dual-band 5 GHz. Browser flashing is unreliable on the C5 &mdash; see note.</p>
+        <p class="desc">WarHog Core &mdash; GPS, SD, WiGLE logging, mesh. Dual-band 5 GHz. Flashes directly via ROM bootloader (<code>--no-stub</code>).</p>
         <div class="fwrow">
           <span class="fwlbl">Firmware</span>
           <div class="fwtoggle" role="group" aria-label="Firmware source">
@@ -253,13 +253,12 @@
           <a href="firmware/xiao_c5.bin" download data-dl>Download .bin</a>
           <a href="manifests/xiao_c5.json" data-mf>manifest</a>
         </div>
-        <details open><summary>Browser flash failing? Terminal fallback</summary>
-<p class="desc" style="margin:4px 0 8px">The Install button above uses <b>esptool-js 0.7.0</b>, which detects newer C5 silicon (rev v1.2) that the standard browser flasher (esp-web-tools 10.4.0) can&rsquo;t. If it still fails, flash the downloaded <b>.bin</b> from a terminal:</p>
-<pre><span class="c"># one-time: esptool v5+ supports C5 rev v1.2</span>
+        <details><summary>Browser flash failing? Terminal fallback</summary>
+<p class="desc" style="margin:4px 0 8px">The Install button above flashes the C5 in <b>ROM (<code>--no-stub</code>) mode</b> so the USB-Serial/JTAG link doesn&rsquo;t drop. If your board doesn&rsquo;t enter download mode automatically, hold <b>BOOT</b>, tap <b>RESET</b>, release <b>BOOT</b>, then click Install &mdash; or flash from a terminal:</p>
+<pre><span class="c"># one-time: esptool v5+ supports C5</span>
 pip install -U esptool
-<span class="c"># flash the merged .bin at offset 0:</span>
-esptool --chip esp32c5 write-flash 0x0 xiao_c5.bin
-<span class="c"># add --no-stub if it stops at "stub flasher"</span></pre>
+<span class="c"># flash the merged .bin at offset 0 with --no-stub:</span>
+esptool --chip esp32c5 --no-stub write-flash 0x0 xiao_c5.bin</pre>
         </details>
       </div>
 
@@ -268,7 +267,7 @@ esptool --chip esp32c5 write-flash 0x0 xiao_c5.bin
            data-manifest-fork="manifests/warhognode_c5.json"
            data-manifest-ham="manifests/pigletnode_c5-ham.json"
            data-bin-fork="firmware/warhognode_c5.bin"
-           data-bin-ham="https://github.com/Hamspiced/piglet/releases/latest/download/PigletNode.ino.merged.bin">
+           data-bin-ham="firmware/PigletNode.ino.merged.bin">
         <h2>WarHogNode C5</h2>
         <div class="chips"><span class="chip a">ESP32-C5</span><span class="chip">8 MB</span><span class="chip">mesh node</span></div>
         <p class="desc">XIAO C5 mesh node &mdash; boots straight into ESP-Now node mode. Dual-band, no display.</p>
@@ -285,13 +284,12 @@ esptool --chip esp32c5 write-flash 0x0 xiao_c5.bin
           <a href="firmware/warhognode_c5.bin" download data-dl>Download .bin</a>
           <a href="manifests/warhognode_c5.json" data-mf>manifest</a>
         </div>
-        <details open><summary>Browser flash failing? Terminal fallback</summary>
-<p class="desc" style="margin:4px 0 8px">The Install button above uses <b>esptool-js 0.7.0</b>, which detects newer C5 silicon (rev v1.2) that the standard browser flasher (esp-web-tools 10.4.0) can&rsquo;t. If it still fails, flash the downloaded <b>.bin</b> from a terminal:</p>
-<pre><span class="c"># one-time: esptool v5+ supports C5 rev v1.2</span>
+        <details><summary>Browser flash failing? Terminal fallback</summary>
+<p class="desc" style="margin:4px 0 8px">The Install button above flashes the C5 in <b>ROM (<code>--no-stub</code>) mode</b> so the USB-Serial/JTAG link doesn&rsquo;t drop. If your board doesn&rsquo;t enter download mode automatically, hold <b>BOOT</b>, tap <b>RESET</b>, release <b>BOOT</b>, then click Install &mdash; or flash from a terminal:</p>
+<pre><span class="c"># one-time: esptool v5+ supports C5</span>
 pip install -U esptool
-<span class="c"># flash the merged .bin at offset 0:</span>
-esptool --chip esp32c5 write-flash 0x0 warhognode_c5.bin
-<span class="c"># add --no-stub if it stops at "stub flasher"</span></pre>
+<span class="c"># flash the merged .bin at offset 0 with --no-stub:</span>
+esptool --chip esp32c5 --no-stub write-flash 0x0 warhognode_c5.bin</pre>
         </details>
       </div>
 
@@ -301,17 +299,16 @@ esptool --chip esp32c5 write-flash 0x0 warhognode_c5.bin
         <div class="chips"><span class="chip a">ESP32-C5</span><span class="chip">8 MB</span><span class="chip">0.96&Prime; TFT</span><span class="chip">official</span></div>
         <p class="desc">USB-A dongle &mdash; 0.96&Prime; ST7735 TFT, APA102 LED, GPS, SD, dual-band. Flashes the official Piglet T-Dongle build; the fork tracks upstream for this board.</p>
         <button type="button" class="flash" data-c5flash
-                data-c5bin="https://github.com/Hamspiced/piglet/releases/latest/download/TDongleC5_Piglet.ino.merged.bin">&#9654; Install</button>
+                data-c5bin="firmware/TDongleC5_Piglet.ino.merged.bin">&#9654; Install</button>
         <div class="alt">
-          <a href="https://github.com/Hamspiced/piglet/releases/latest/download/TDongleC5_Piglet.ino.merged.bin" download>Download .bin</a>
+          <a href="firmware/TDongleC5_Piglet.ino.merged.bin" download>Download .bin</a>
           <a href="manifests/tdongle_c5-ham.json">manifest</a>
         </div>
-        <details open><summary>Browser flash failing? Terminal fallback</summary>
-<p class="desc" style="margin:4px 0 8px">The Install button here uses esptool-js 0.7.0 (which supports C5 rev v1.2). If it still fails, flash the downloaded <b>.bin</b> from a terminal with up-to-date esptool:</p>
-<pre><span class="c"># one-time: esptool v5+ supports C5 rev v1.2</span>
+        <details><summary>Browser flash failing? Terminal fallback</summary>
+<p class="desc" style="margin:4px 0 8px">The Install button here flashes in ROM (<code>--no-stub</code>) mode. If it still fails, flash the downloaded <b>.bin</b> from a terminal with up-to-date esptool:</p>
+<pre><span class="c"># one-time: esptool v5+ supports C5</span>
 pip install -U esptool
-esptool --chip esp32c5 write-flash 0x0 TDongleC5_Piglet.ino.merged.bin
-<span class="c"># add --no-stub if it stops at "stub flasher"</span></pre>
+esptool --chip esp32c5 --no-stub write-flash 0x0 TDongleC5_Piglet.ino.merged.bin</pre>
         </details>
       </div>
 

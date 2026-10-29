@@ -120,6 +120,12 @@ jobs:
           mkdir -p web-flasher/firmware
           # Each artifact dir holds one <env>.bin — flatten into firmware/.
           find _artifacts -name '*.bin' -exec cp -v {} web-flasher/firmware/ \;
+          # Mirror upstream official C5 release binaries into firmware/ so
+          # browser fetch() is same-origin (GitHub Releases omits CORS headers).
+          HAM_REL="https://github.com/Hamspiced/piglet/releases/latest/download"
+          for bin in Piglet.ino.merged.bin PigletNode.ino.merged.bin TDongleC5_Piglet.ino.merged.bin; do
+            curl -fsSL "$HAM_REL/$bin" -o "web-flasher/firmware/$bin" || echo "Warning: could not mirror $bin"
+          done
           # The developer wiki (docs/*.md) is the single source of truth; copy it
           # in so docs.html can fetch and render it on the deployed site.
           mkdir -p web-flasher/docs
@@ -127,7 +133,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME}+${GITHUB_SHA::7}"
           echo "Stamping version: $VERSION"
           # Substitute __VERSION__ in the pages and every manifest.
-          find web-flasher \( -name '*.json' -o -name 'index.html' -o -name 'docs.html' \) | while read -r f; do
+          find web-flasher \( -name '*.json' -o -name 'index.html' -o -name 'batch.html' -o -name 'docs.html' \) | while read -r f; do
             sed -i "s|__VERSION__|${VERSION}|g" "$f"
           done
 
