@@ -875,6 +875,23 @@ void ScreenUI::handleSystemTap(int16_t x, int16_t contentY) {
         }
         cfgAssignKV(def.key, def.choices[next].value);
         persistConfig();
+        // A reboot-flagged choice (e.g. CORE PHONE APP) only takes effect on the
+        // next boot, and the phone-app bridge is latched at Core entry — so apply
+        // it immediately with a reboot, giving a clean single-protocol switch
+        // (exactly one of Biscuit / Wardrive Go). Only reboot if the save actually
+        // persisted: a failed save in Core mode must NOT reboot and lose the change
+        // (the "Last save FAILED" banner then tells the user to set it in solo).
+        if (def.reboot && lastSaveOk) {
+          frame.fillSprite(C_BG);
+          frame.setTextDatum(MC_DATUM);
+          frame.setTextColor(C_TEXT, C_BG);
+          frame.drawString("APPLYING...", 120, 148, 2);
+          frame.setTextColor(C_MUTED, C_BG);
+          frame.drawString(def.choices[next].value, 120, 172, 2);
+          present();
+          delay(700);
+          ESP.restart();
+        }
       } else {
         openEditor(i);
       }

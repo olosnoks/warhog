@@ -1,25 +1,29 @@
 #pragma once
-#include <Arduino.h>
 #include "PinMapDefs.h"
+#include <Arduino.h>
 
 struct Config {
   String wigleBasicToken;
   String homeSsid;
   String homePsk;
   String wardriverSsid = "WarHog-WARDRIVE";
-  String wardriverPsk  = "wardrive1234";
-  uint32_t gpsBaud     = 9600;
-  String scanMode      = "aggressive"; // aggressive | powersaving
-  String board = "auto"; // auto | s3 | c5 | c6 | c3 | exp  (pins selected at boot; reboot required after change)
-  String speedUnits  = "kmh"; // kmh | mph
-  int battPin        = -1;    // GPIO for battery voltage ADC (-1 = disabled). Expects 1:2 voltage divider from LiPo.
-  bool batteryTest   = false; // Enable battery test (logs elapsed time to /battery_test.csv)
-  
+  String wardriverPsk = "wardrive1234";
+  uint32_t gpsBaud = 9600;
+  String scanMode = "aggressive"; // aggressive | powersaving
+  String board = "auto"; // auto | s3 | c5 | c6 | c3 | exp  (pins selected at
+                         // boot; reboot required after change)
+  String speedUnits = "kmh"; // kmh | mph
+  int battPin = -1; // GPIO for battery voltage ADC (-1 = disabled). Expects 1:2
+                    // voltage divider from LiPo.
+  bool batteryTest =
+      false; // Enable battery test (logs elapsed time to /battery_test.csv)
+
   // Boot auto-upload limit:
   //  -1 = upload ALL files at boot (no limit)
   //   0 = disabled (no auto-upload at boot)
   //  1+ = upload up to N files at boot (WiGLE allows 25 API calls/day)
-  // IMPORTANT: Requires PSRAM enabled in Arduino IDE for reliable TLS connections.
+  // IMPORTANT: Requires PSRAM enabled in Arduino IDE for reliable TLS
+  // connections.
   int maxBootUploads = 25;
 
   // WDGoWars API key from https://wdgwars.pl/profile -> "Generate API key".
@@ -37,17 +41,18 @@ struct Config {
 
   // Optional device name — appended to WiGLE CSV header and filename so
   // multiple WarHogs uploading to the same account can be distinguished.
-  // E.g. deviceName=rover1  →  device=WarHog-rover1  /  rover1_WarHog_WiGLE_....csv
-  // Leave empty for default ("WarHog-Wardriver" / "WiGLE_....csv").
+  // E.g. deviceName=rover1  →  device=WarHog-rover1  /
+  // rover1_WarHog_WiGLE_....csv Leave empty for default ("WarHog-Wardriver" /
+  // "WiGLE_....csv").
   String deviceName;
 
-  // Auto-start mesh mode after boot uploads: core, node (default), or none.
-  // core — become the mesh coordinator (receives wardriving records from nodes).
-  // node — become a scanning node that forwards records to the Core (default:
-  //        the device boots straight into the PigWorld scene on the mesh page;
-  //        long-press toggles Core/Node).
-  // none — normal solo wardriving mode.
-  String meshModeOnBoot = "node";
+  // Auto-start mesh mode after boot uploads: none (default), node, or core.
+  // none — normal solo wardriving mode (default: boots straight into the
+  //        animated random PigWorld scene in solo wardriving mode).
+  // node — become a scanning node that forwards records to the Core.
+  // core — become the mesh coordinator (receives wardriving records from
+  // nodes).
+  String meshModeOnBoot = "none";
 
   // Rotate the OLED display 180° (true = upside-down mount, false = normal).
   // Requires reboot to take effect.
@@ -75,12 +80,19 @@ struct Config {
   uint32_t sdMaxSpiHz = 20000000;
 
   // When true (default): keep the BLE phone bridge running while SOLO
-  // wardriving, so the WarHog / Biscuit Manager app receives this device's own
-  // scan results the same way it receives a mesh Core's. In mesh Core mode the
-  // bridge always runs (the app is the only way to see mesh traffic); this
-  // switch only governs solo mode, where BLE is otherwise idle. Turn it off to
-  // reclaim the BT controller RAM, or if BLE contends with something else.
+  // wardriving and in Mesh Node mode, so the Wardrive Go / Biscuit Manager app
+  // receives this device's scan results in every mode (Solo, Node, and Core).
+  // In mesh Core mode the bridge always runs; turn this off to disable BLE in
+  // Solo and Node modes.
   bool blePhoneSolo = true;
+
+  // BLE phone bridge personality:
+  //   "wardrivego" (default) — RocketGod iosESP v1.5 bridge for the Wardrive Go
+  //   /
+  //                            WarBLE Go app (advertises as "iosESP-XXXX").
+  //   "biscuit"              — Biscuit Pro + WarHogMesh GATT advertisement for
+  //                            the Biscuit Manager app.
+  String blePersonality = "wardrivego";
 
   // Network whitelist: up to 10 SSIDs that are scanned normally (still count
   // toward Found totals) but are never written to the CSV log -- e.g. your
@@ -90,13 +102,13 @@ struct Config {
   String ssidWhitelist[10];
 };
 
-const PinMap& detectPinsByChip();
+const PinMap &detectPinsByChip();
 PinMap pickPinsFromConfig();
 bool wardriverIsC5();
 
 String trimCopy(String s);
-bool parseKeyValueLine(const String& lineIn, String& keyOut, String& valOut);
-void cfgAssignKV(const String& k, const String& v);
+bool parseKeyValueLine(const String &lineIn, String &keyOut, String &valOut);
+void cfgAssignKV(const String &k, const String &v);
 bool loadConfigFromSD();
 bool saveConfigToSD();
 

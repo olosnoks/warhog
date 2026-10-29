@@ -2,6 +2,7 @@
 #include "Globals.h"      // cfg, gps, gpsHasFix, networksFound2G/5G, FIRMWARE_VERSION
 #include "MeshNode.h"     // meshCoreActive, coreRecordsRx, coreNodeCount, coreNodes[], JCMK_CHANNELS
 #include "BiscuitCompat.h"// present as a Biscuit Pro to the Biscuit Manager app (rides this server)
+#include "IosEspCompat.h" // present as an iosESP bridge to the Wardrive Go app (rides this server)
 
 #include <NimBLEDevice.h>
 
@@ -84,11 +85,19 @@ static void macToStr(const uint8_t* m, char* out /*>=18*/) {
 class BridgeServerCB : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* s, NimBLEConnInfo& connInfo) override {
     connectedCount++;
-    // Keep advertising so a second central (or reconnect) can still find us.
-    NimBLEDevice::startAdvertising();
+    if (cfg.blePersonality == "biscuit") {
+      // Keep advertising so a second central (or reconnect) can still find us.
+      NimBLEDevice::startAdvertising();
+    } else {
+      // Wardrive Go treats continued advertisements while connected as a stale
+      // link and terminates the connection (reason 531 / 0x13). Stop advertising
+      // while connected; onDisconnect re-arms it immediately.
+      NimBLEDevice::stopAdvertising();
+    }
   }
   void onDisconnect(NimBLEServer* s, NimBLEConnInfo& connInfo, int reason) override {
     if (connectedCount) connectedCount--;
+    iosEspCompatOnDisconnect();
     NimBLEDevice::startAdvertising();
   }
 };
@@ -113,7 +122,7 @@ static ControlCB      controlCb;
 void bleBridgeBegin() {
   if (bridgeUp) return;
 
-  // Advertised name: "WarHog-Core" or "WarHog-Core <deviceName>".
+  // Advertised name for Biscuit / WarHogMesh: "WarHog-Core" or "WarHog-Core <deviceName>".
   String name = "WarHog-Core";
   if (cfg.deviceName.length()) { name += " "; name += cfg.deviceName; }
 
@@ -142,24 +151,42 @@ void bleBridgeBegin() {
 
   svc->start();
 
-  // Add the Biscuit Pro service + Device Information onto this same server so
-  // the Biscuit Manager app sees a Pro named "<this device>". Must be before
-  // advertising. Harmless to the WarHogMesh app (it ignores this service).
+  // Add both the Wardrive Go (iosESP) and Biscuit Pro services onto this same
+  // server so either companion app can use the GATT table. Must be before
+  // advertising.
   biscuitCompatAttach(bleServer);
+  iosEspCompatAttach(bleServer);
 
-  // Advertise BOTH services. Two 128-bit UUIDs won't fit one 31-byte packet,
-  // so the Biscuit UUID goes in the primary advertisement (its scan filter
-  // requires it there/merged) and the mesh UUID + name go in the scan
-  // response. The Biscuit app also keys its device label off the GAP name,
-  // so this still shows up as "WarHog-Core ...".
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-  adv->addServiceUUID(BISCUIT_SERVICE_UUID);
+  if (cfg.blePersonality == "biscuit") {
+    // Advertise BOTH Biscuit + WarHogMesh services. Two 128-bit UUIDs won't fit
+    // one 31-byte packet, so the Biscuit UUID goes in the primary advertisement
+    // and the mesh UUID + name go in the scan response.
+    adv->addServiceUUID(BISCUIT_SERVICE_UUID);
 
-  NimBLEAdvertisementData scanResp;
-  scanResp.setName(std::string(name.c_str()));
-  scanResp.addServiceUUID(SVC_UUID);
-  adv->enableScanResponse(true);              // v2.x: was setScanResponse(true) in v1.4.x
-  adv->setScanResponseData(scanResp);
+    NimBLEAdvertisementData scanResp;
+    scanResp.setName(std::string(name.c_str()));
+    scanResp.addServiceUUID(SVC_UUID);
+    adv->enableScanResponse(true);              // v2.x: was setScanResponse(true) in v1.4.x
+    adv->setScanResponseData(scanResp);
+  } else {
+    // Default ("wardrivego"): advertise as "iosESP-XXXX" with the iosESP GATT
+    // service UUID in the primary advertisement and the GAP name in the scan
+    // response so the Wardrive Go / WarBLE Go app pairs and streams in all modes.
+    const char* ieName = iosEspCompatBuildName();
+    name = ieName;
+    NimBLEDevice::setDeviceName(ieName);
+
+    NimBLEAdvertisementData advData;
+    advData.setFlags(0x06);
+    advData.addServiceUUID(NimBLEUUID(iosEspCompatServiceUuid()));
+    adv->setAdvertisementData(advData);
+
+    NimBLEAdvertisementData scanResp;
+    scanResp.setName(ieName);
+    adv->enableScanResponse(true);
+    adv->setScanResponseData(scanResp);
+  }
   NimBLEDevice::startAdvertising();
 
   recHead = recTail = 0;
@@ -168,13 +195,15 @@ void bleBridgeBegin() {
   lastStatusMs = 0;
   connectedCount = 0;
   bridgeUp = true;
-  Serial.printf("[BLE] Bridge up as \"%s\"\n", name.c_str());
+  Serial.printf("[BLE] Bridge up as \"%s\" (personality=%s)\n",
+                name.c_str(), cfg.blePersonality.c_str());
 }
 
 void bleBridgeStop() {
   if (!bridgeUp) return;
   bridgeUp = false;
   biscuitCompatDetach();          // drop Biscuit refs before we free the controller
+  iosEspCompatDetach();           // drop Wardrive Go refs before we free the controller
   NimBLEDevice::stopAdvertising();
   // Full deinit frees the BT controller RAM for the WiFi/ESP-Now path.
   NimBLEDevice::deinit(true);
@@ -195,7 +224,9 @@ void bleBridgePushRecord(const char* bssid, const char* ssid, const char* auth,
                          const char* isoTime) {
   if (!bridgeUp) return;
 
-  // Mirror each AP to the Biscuit Manager app so it plots in real time on the map.
+  // Mirror each AP to both Wardrive Go and Biscuit Manager so whichever app is
+  // subscribed plots it in real time on the map.
+  iosEspCompatPushAp(bssid, ssid, ch, rssi, auth);
   biscuitCompatPushAp(bssid, ssid, ch, rssi, auth);
 
   uint8_t next = (recTail + 1) % REC_RING;
@@ -284,14 +315,20 @@ static void buildStatusJson(String& out) {
 void bleBridgeTick() {
   if (!bridgeUp) return;
 
-  // 0. Service any Biscuit Manager commands + stream telemetry; push GPS ~1 Hz
-  //    so the app can pin the mirrored APs to our location.
+  // 0. Service Wardrive Go (iosESP) + Biscuit Manager commands and stream
+  //    telemetry; push GPS ~1 Hz so the app can pin the mirrored APs to our
+  //    location.
+  iosEspCompatSetGpsPresent(gps.charsProcessed() > 0);
+  iosEspCompatTick();
   biscuitCompatTick();
   {
     static uint32_t biscuitGpsMs = 0;
     uint32_t nowg = millis();
     if (gpsHasFix && nowg - biscuitGpsMs >= 1000) {
       biscuitGpsMs = nowg;
+      int sats = gps.satellites.isValid() ? (int)gps.satellites.value() : 0;
+      iosEspCompatPushGps(gps.location.lat(), gps.location.lng(),
+                          gps.altitude.meters(), sats);
       biscuitCompatPushGps(gps.location.lat(), gps.location.lng(),
                            gps.altitude.meters(), gps.hdop.hdop());
     }

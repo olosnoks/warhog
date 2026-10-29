@@ -4,6 +4,7 @@
 #include "GPS.h"
 #include "SDUtils.h"
 #include "BLEBridge.h"
+#include "IosEspCompat.h"
 #include "PigMetricsHook.h"   // Phase-0 instrumentation (observe-only)
 #include <esp_now.h>
 #include "esp_wifi.h"
@@ -1030,37 +1031,53 @@ static void nodeDoScanTick() {
     }
 #endif
 
+    double lat = 0, lon = 0, altM = 0, accM = 0;
+    if (gpsHasFix) {
+      lat  = gps.location.lat();
+      lon  = gps.location.lng();
+      altM = gps.altitude.meters();
+      accM = gps.hdop.hdop();
+    }
+    String ts = iso8601NowUTC();
+
     if (!jcmkCoreIsWarHog) {
       // Legacy immediate-send path: non-WarHog Core (real JCMK hardware or
       // Biscuit Pro), or Core type not yet confirmed. Unchanged from before.
-      jcmkSetChannel(JCMK_ESPNOW_CH);
+      if (jcmkHaveCore) jcmkSetChannel(JCMK_ESPNOW_CH);
       for (int i = 0; i < n; i++) {
         if (pigDedupSkip(i)) { pigMetricsOnSuppressed(); continue; }  // Phase 1 dedup (no-op unless flag)
         sweepYield++;                                                 // Phase 2 revisit ranking
         String bssid = WiFi.BSSIDstr(i);
         String ssid  = WiFi.SSID(i);
         String auth  = meshAuthModeToString(WiFi.encryptionType(i));
-        if (biscuitPlainReplyPending) {
-          if (auth == "OPEN") auth = "[OPEN]";
-          else if (auth == "WEP") auth = "[WEP]";
-          else if (auth == "WPA") auth = "[WPA_PSK]";
-          else if (auth == "WPA2") auth = "[WPA2_PSK]";
-          else if (auth == "WPA3") auth = "[WPA3_PSK]";
-          else if (auth == "WPAWPA2") auth = "[WPA_WPA2_PSK]";
-          else if (auth == "WPA2EAP") auth = "[WPA2_ENTERPRISE]";
-          else if (auth == "WPA2WPA3") auth = "[WPA2_WPA3_PSK]";
-          else auth = "[UNDEFINED]";
-        }
         int    ch    = WiFi.channel(i);
         int    rssi  = WiFi.RSSI(i);
-        String line  = bssid + "," + ssid + "," + auth + ","
-                     + String(ch) + "," + String(rssi) + ",W";
-        // Log the exact payload content -- we've verified scanning finds
-        // networks and sends are attempted/delivered at the radio level, but
-        // never actually inspected what's inside the message being sent.
-        Serial.printf("[MESH] TX: %s\n", line.c_str());
-        jcmkSendText(line);
-        jcmkSentCount++;
+
+        // Mirror every node-discovered AP to the BLE phone bridge (Wardrive Go / Biscuit).
+        bleBridgePushRecord(bssid.c_str(), ssid.c_str(), auth.c_str(),
+                            ch, rssi, lat, lon, altM, accM, ts.c_str());
+
+        if (jcmkHaveCore) {
+          if (biscuitPlainReplyPending) {
+            if (auth == "OPEN") auth = "[OPEN]";
+            else if (auth == "WEP") auth = "[WEP]";
+            else if (auth == "WPA") auth = "[WPA_PSK]";
+            else if (auth == "WPA2") auth = "[WPA2_PSK]";
+            else if (auth == "WPA3") auth = "[WPA3_PSK]";
+            else if (auth == "WPAWPA2") auth = "[WPA_WPA2_PSK]";
+            else if (auth == "WPA2EAP") auth = "[WPA2_ENTERPRISE]";
+            else if (auth == "WPA2WPA3") auth = "[WPA2_WPA3_PSK]";
+            else auth = "[UNDEFINED]";
+          }
+          String line  = bssid + "," + ssid + "," + auth + ","
+                       + String(ch) + "," + String(rssi) + ",W";
+          // Log the exact payload content -- we've verified scanning finds
+          // networks and sends are attempted/delivered at the radio level, but
+          // never actually inspected what's inside the message being sent.
+          Serial.printf("[MESH] TX: %s\n", line.c_str());
+          jcmkSendText(line);
+          jcmkSentCount++;
+        }
       }
     } else {
       // WarHog-to-WarHog: buffer results instead of sending immediately.
@@ -1075,9 +1092,16 @@ static void nodeDoScanTick() {
         String auth  = meshAuthModeToString(WiFi.encryptionType(i));
         int    ch    = WiFi.channel(i);
         int    rssi  = WiFi.RSSI(i);
-        String line  = bssid + "," + ssid + "," + auth + ","
-                     + String(ch) + "," + String(rssi) + ",W";
-        jcmkPendingPush(line);
+
+        // Mirror every node-discovered AP to the BLE phone bridge (Wardrive Go / Biscuit).
+        bleBridgePushRecord(bssid.c_str(), ssid.c_str(), auth.c_str(),
+                            ch, rssi, lat, lon, altM, accM, ts.c_str());
+
+        if (jcmkHaveCore) {
+          String line  = bssid + "," + ssid + "," + auth + ","
+                       + String(ch) + "," + String(rssi) + ",W";
+          jcmkPendingPush(line);
+        }
       }
     }
   }
@@ -1282,8 +1306,11 @@ void exitCoreMode() {
 #if PIG_FEAT_CORE_ISO
   coreStoreStop();
 #endif
-  // Tear down BLE first so the controller RAM is freed before the WiFi reset.
-  bleBridgeStop();
+  // Keep BLE up across Core -> Node / Solo transitions when blePhoneSolo is
+  // enabled so the Wardrive Go connection stays unbroken across mode switches.
+  if (!cfg.blePhoneSolo) {
+    bleBridgeStop();
+  }
   if (meshCoreActive) esp_now_deinit();
   meshCoreActive = false;
   coreNodeCount  = 0;
@@ -1347,7 +1374,46 @@ void coreModeTick() {
   }
   if (changed) coreReassignChannels();
 
-  // 5. Service the BLE bridge: drain record queue, refresh roster/status,
+  // 5. If no mesh nodes are linked yet but a phone app (Wardrive Go) is
+  //    actively streaming, run a lightweight async scan on JCMK_ESPNOW_CH (ch 6)
+  //    so the radio never leaves the admin channel while still feeding live APs
+  //    to the phone app in lone-Core mode.
+  {
+    static bool     coreSelfScanActive = false;
+    static uint32_t coreSelfScanLastMs = 0;
+    if (coreNodeCount == 0 && iosEspCompatStreaming()) {
+      if (!coreSelfScanActive && (now - coreSelfScanLastMs >= 3000)) {
+        coreSelfScanLastMs = now;
+        int16_t rc = WiFi.scanNetworks(/*async*/true, /*hidden*/true,
+                                        /*passive*/false, 120, JCMK_ESPNOW_CH);
+        if (rc == WIFI_SCAN_RUNNING || rc == 0) coreSelfScanActive = true;
+      } else if (coreSelfScanActive) {
+        int n = WiFi.scanComplete();
+        if (n >= 0) {
+          for (int i = 0; i < n; i++) {
+            String line = WiFi.BSSIDstr(i) + "," + WiFi.SSID(i) + ","
+                        + meshAuthModeToString(WiFi.encryptionType(i)) + ","
+                        + String(WiFi.channel(i)) + "," + String(WiFi.RSSI(i)) + ",W";
+            coreParseAndLogText(line.c_str());
+          }
+          WiFi.scanDelete();
+          coreSelfScanActive = false;
+          jcmkSetChannel(JCMK_ESPNOW_CH);
+        } else if (n < 0 && n != WIFI_SCAN_RUNNING) {
+          WiFi.scanDelete();
+          coreSelfScanActive = false;
+        }
+      }
+    } else if (coreSelfScanActive) {
+      if (WiFi.scanComplete() != WIFI_SCAN_RUNNING) {
+        WiFi.scanDelete();
+        coreSelfScanActive = false;
+        jcmkSetChannel(JCMK_ESPNOW_CH);
+      }
+    }
+  }
+
+  // 6. Service the BLE bridge: drain record queue, refresh roster/status,
   //    apply any control commands from the app.
   bleBridgeTick();
 }
@@ -1409,6 +1475,12 @@ void nodeModeTick() {
     jcmkLastReqMs  = now;
     jcmkSetChannel(JCMK_ESPNOW_CH);
     jcmkSendCoreRequest();
+    if (iosEspCompatStreaming()) {
+      // Hold on ch 6 for the admin window so CORE_REPLY can arrive before
+      // resuming channel scans for the connected phone app.
+      nodeScanAdminWin = true;
+      nodeScanAdminMs  = now;
+    }
     jcmkReqInterval = (jcmkReqInterval * 2 > JCMK_REQ_MAX_MS)
                       ? JCMK_REQ_MAX_MS : jcmkReqInterval * 2;
   }
@@ -1420,10 +1492,9 @@ void nodeModeTick() {
     jcmkSendHeartbeat();
   }
 
-  // Per-channel async scan — runs continuously while connected to Core.
-  // jcmkWarHogSlotTick() only ever acts for confirmed-WarHog pairings, and
-  // only in the gap between scans, so it never affects scan timing itself.
-  if (jcmkHaveCore) {
+  // Per-channel async scan — runs continuously while connected to Core, OR
+  // whenever Wardrive Go is actively streaming from this Node.
+  if (jcmkHaveCore || iosEspCompatStreaming()) {
     jcmkWarHogSlotTick();
     nodeDoScanTick();
   }

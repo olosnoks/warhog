@@ -7,6 +7,7 @@ the base firmware history.
 
 ## Unreleased
 
+<<<<<<< HEAD
 ### Fix saved cluster profiles not loading after a reboot (CYD/W550)
 - **Profiles saved on the Core didn't come back after a CYD reboot.** Same root cause as the
   settings-persistence fix below: `meshProfilesSaveToSD()` and `meshProfilesLoad()` accessed
@@ -16,6 +17,17 @@ the base firmware history.
   and logs `[PROFILE] Saved /mesh_profiles.cfg` or a failure to open the file on serial.
 - Verified on a Freenove CYD (assign nodes to sub-clusters → save profile → reboot → load). Not
   yet tested on the Guition JC8048W550.
+=======
+### Wardrive Go (`iosESP-XXXX`) bridge + solo PigWorld defaults on XIAO C5 (`warhog_fork`)
+- **Wardrive Go support across Solo, Mesh Node, and Mesh Core modes.** Added `IosEspCompat`
+  (`iosESP-XXXX` GATT service + primary UUID advertising, disconnect/stop-advertising handling so
+  iOS does not drop with reason 531) alongside Biscuit Manager (`blePersonality=wardrivego` default,
+  configurable in `wardriver.cfg` and the Web UI). Scans and GPS stream over BLE in Solo, Node, and
+  Core modes, including a lightweight ch-6 self-scan when in lone-Core mode with no linked nodes.
+- **Boot straight into animated PigWorld in Solo wardriving mode.** Default `meshModeOnBoot` is now
+  `none` (Solo mode on page 4 with randomized PigWorld terrain/sky and active scanning even while
+  the SoftAP window is idle or without an SD card / GPS fix).
+>>>>>>> 61d80f2 (feat(warhog_fork): Wardrive Go (iosESP) BLE bridge in all modes + solo PigWorld boot defaults)
 
 ### Fix the Wardrive Go phone bridge and settings persistence (CYD/W550)
 - **Wardrive Go couldn't see the Core.** The iosESP/GhostESP bridge was advertising as
@@ -30,6 +42,11 @@ the base firmware history.
 - **Settings UX:** the phone-app selector is renamed *CORE BLE APP* → *CORE PHONE APP* and the
   `BISCUIT REPORT` hint clarified, so it's no longer confused with the phone app — `biscuitReport`
   is ESP-NOW forwarding to a separate Biscuit coordinator, `blePersonality` is the phone app.
+- **Reboot-flagged choices now auto-apply.** Changing a REBOOT-marked choice (CORE PHONE APP,
+  MESH MODE ON BOOT) reboots immediately so the change takes effect cleanly — for the phone app
+  that means the device comes back advertising exactly one protocol (Biscuit *or* Wardrive Go),
+  no lingering bridge. It only auto-reboots if the save persisted; a failed save shows
+  "Last save FAILED" and does not reboot, so the change isn't lost.
 
 ### Update mesh nodes over the air from the CYD Core
 New ESP-NOW messages `PIG_MSG_OTA_BEGIN/DATA/ACK` (0x25–0x27) let the Core stream a node's

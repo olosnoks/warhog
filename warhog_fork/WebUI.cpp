@@ -398,10 +398,16 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(
           <option value="core">Core &mdash; Mesh Coordinator</option>
         </select>
       </div>
-      <div><label>Phone App Over BLE While Solo Wardriving</label>
+      <div><label>Phone App Over BLE (Solo &amp; Mesh Node Modes)</label>
         <select id="blePhoneSolo">
-          <option value="true">Enabled &mdash; Stream My Own Scans to the App (default)</option>
+          <option value="true">Enabled &mdash; Stream Scans in All Modes (default)</option>
           <option value="false">Disabled &mdash; BLE Off Unless in Mesh Core Mode</option>
+        </select>
+      </div>
+      <div><label>BLE Phone App Personality (requires reboot)</label>
+        <select id="blePersonality">
+          <option value="wardrivego">Wardrive Go / WarBLE Go &mdash; iosESP-XXXX (default)</option>
+          <option value="biscuit">Biscuit Manager &mdash; WarHog-Core</option>
         </select>
       </div>
       <div><label>Rotate Screen 180&deg; (requires reboot)</label>
@@ -544,7 +550,7 @@ async function loadStatus(){
     setText('vApSsid',j?.config?.wardriverSsid||'\u2014');
 
     // Fill config form — skip masked/secret values
-    for(const k of ['wigleBasicToken','wdgwarsApiKey','wardriftApiKey','deviceName','board','gpsBaud','homeSsid','wardriverSsid','wardriverPsk','scanMode','speedUnits','battPin','batteryTest','maxBootUploads','meshModeOnBoot','rotateScreen180','autoStartAfterUpload','uploadOnNetworkSeen','blePhoneSolo']){
+    for(const k of ['wigleBasicToken','wdgwarsApiKey','wardriftApiKey','deviceName','board','gpsBaud','homeSsid','wardriverSsid','wardriverPsk','scanMode','speedUnits','battPin','batteryTest','maxBootUploads','meshModeOnBoot','rotateScreen180','autoStartAfterUpload','uploadOnNetworkSeen','blePhoneSolo','blePersonality']){
       if(j.config&&(k in j.config)){
         const v=String(j.config[k]);
         if(maskedKeys.has(k)&&(v===''||v==='(set)'))continue;
@@ -653,7 +659,7 @@ async function deleteAllLogs(){
 
 /* ---- Shared save logic used by both Save and Save+Reboot ---- */
 async function doSave(){
-  const keys=['board','wigleBasicToken','wdgwarsApiKey','wardriftApiKey','deviceName','gpsBaud','homeSsid','homePsk','wardriverSsid','wardriverPsk','scanMode','speedUnits','battPin','batteryTest','maxBootUploads','meshModeOnBoot','rotateScreen180','autoStartAfterUpload','uploadOnNetworkSeen','blePhoneSolo'];
+  const keys=['board','wigleBasicToken','wdgwarsApiKey','wardriftApiKey','deviceName','gpsBaud','homeSsid','homePsk','wardriverSsid','wardriverPsk','scanMode','speedUnits','battPin','batteryTest','maxBootUploads','meshModeOnBoot','rotateScreen180','autoStartAfterUpload','uploadOnNetworkSeen','blePhoneSolo','blePersonality'];
   let body='# Saved from Web UI\n# key=value\n';
   for(const k of keys){
     const el=$(k);
@@ -899,7 +905,7 @@ static void handleStatus() {
   // string fields (each up to a full 32-byte SSID) added to "config".
   DynamicJsonDocument doc(3072);
 
-  bool allowScan = scanningEnabled && sdOk && (userScanOverride || !autoPaused);
+  bool allowScan = scanningEnabled && (userScanOverride || !autoPaused);
   doc["scanningEnabled"] = scanningEnabled;
   doc["allowScan"] = allowScan;
   doc["userScanOverride"] = userScanOverride;
@@ -959,6 +965,7 @@ static void handleStatus() {
   c["autoStartAfterUpload"] = cfg.autoStartAfterUpload;
   c["uploadOnNetworkSeen"] = cfg.uploadOnNetworkSeen;
   c["blePhoneSolo"]   = cfg.blePhoneSolo;
+  c["blePersonality"] = cfg.blePersonality;
   for (uint8_t i = 0; i < 10; i++) {
     c[String("ssidWhitelist") + String(i + 1)] = cfg.ssidWhitelist[i];
   }
