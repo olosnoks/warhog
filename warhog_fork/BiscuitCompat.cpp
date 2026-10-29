@@ -34,8 +34,8 @@ static NimBLECharacteristic* chStatus     = nullptr;
 static NimBLEServer*         bcServer     = nullptr;
 
 // Inbound command ring (write callback enqueues; tick drains/replies).
-#define CMD_SLOT_LEN 180
-#define CMD_RING     16
+#define CMD_SLOT_LEN 128
+#define CMD_RING     8
 struct CmdSlot { char line[CMD_SLOT_LEN]; };
 static CmdSlot           cmdRing[CMD_RING];
 static volatile uint8_t  cmdHead = 0;   // drained by tick
@@ -47,7 +47,7 @@ static volatile uint8_t  cmdTail = 0;   // filled by write cb
 // Throughput comes from draining fast (TX_PER_TICK), not from a huge ring —
 // the app dedups by BSSID, so a lossy stream of re-sightings still converges.
 #define TX_SLOT_LEN  128
-#define TX_RING      96          // 96*128 = ~12 KB static (vs original 64*150 = 9.6 KB)
+#define TX_RING      48          // 96*128 = ~12 KB static (vs original 64*150 = 9.6 KB)
 #define TX_PER_TICK  48          // notifies per tick; drains the ring quickly
 struct TxSlot { char line[TX_SLOT_LEN]; };
 static TxSlot            txRing[TX_RING];

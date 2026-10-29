@@ -53,7 +53,7 @@ static bool     ieRebootReq = false;
 static const char* IE_CHANS = "1,2,3,4,5,6,7,8,9,10,11,12,13";
 
 // Inbound command ring (write cb enqueues raw bytes; tick drains/replies).
-#define IE_CMD_SLOT_LEN 256
+#define IE_CMD_SLOT_LEN 128
 #define IE_CMD_RING     8
 struct IeCmdSlot { uint8_t data[IE_CMD_SLOT_LEN]; uint16_t len; };
 static IeCmdSlot         ieCmdRing[IE_CMD_RING];
@@ -61,8 +61,8 @@ static volatile uint8_t  ieCmdHead = 0;
 static volatile uint8_t  ieCmdTail = 0;
 
 // Outbound frame ring (binary DATA/ACK frames; tick notifies).
-#define IE_TX_SLOT_LEN 200
-#define IE_TX_RING     64
+#define IE_TX_SLOT_LEN 180
+#define IE_TX_RING     32
 #define IE_TX_PER_TICK 48
 struct IeTxSlot { uint8_t data[IE_TX_SLOT_LEN]; uint8_t len; };
 static IeTxSlot          ieTxRing[IE_TX_RING];

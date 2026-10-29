@@ -48,10 +48,11 @@ static void tStore(void*) {
 }
 static void coreStoreStart() {
   if (gStoreTask) return;
-  if (!gLogQ) gLogQ = xQueueCreate(48, sizeof(PigLogRec));
+  if (!gLogQ) gLogQ = xQueueCreate(32, sizeof(PigLogRec));
   gStoreRun = true;
-  xTaskCreatePinnedToCore(tStore, "tStore", 6144, nullptr, 3, &gStoreTask, 1);  // core 1, prio 3
-  Serial.println("[CORE-ISO] SD store task started (core 1)");
+  BaseType_t coreId = (portNUM_PROCESSORS > 1) ? 1 : 0;
+  xTaskCreatePinnedToCore(tStore, "tStore", 4096, nullptr, 3, &gStoreTask, coreId);
+  Serial.printf("[CORE-ISO] SD store task started (core %d)\n", (int)coreId);
 }
 static void coreStoreStop() {
   if (!gStoreTask) return;
@@ -292,11 +293,12 @@ static const uint32_t CORE_HB_MS        = 5000;
 static const uint32_t CORE_NODE_TIMEOUT = 90000;  // 90 s — generous for many-node ESP-Now collisions
 
 // Ring buffers: ESP-Now callback → main loop
-#define CORE_REQ_QUEUE  16
-#define CORE_TEXT_QUEUE 192  // sized for burst from 12 nodes × ~15 networks each
+#define CORE_REQ_QUEUE     16
+#define CORE_TEXT_QUEUE    64
+#define CORE_TEXT_SLOT_LEN 96  // sized for burst from 12 nodes × ~15 networks each
 
 struct CorReqSlot  { uint8_t mac[6]; bool isBiscuit; bool isWarHog; };
-struct CorTextSlot { char    line[JCMK_TEXT_MAX + 1]; };
+struct CorTextSlot { char    line[CORE_TEXT_SLOT_LEN]; };
 
 static CorReqSlot          coreReqBuf[CORE_REQ_QUEUE];
 static volatile uint8_t    coreReqHead = 0, coreReqTail = 0;
@@ -598,7 +600,7 @@ static void jcmkOnRecv(const esp_now_recv_info_t* info,
       const jcmk_text_msg_t* tm = (const jcmk_text_msg_t*)data;
       uint8_t next = (coreTextTail + 1) % CORE_TEXT_QUEUE;
       if (next != coreTextHead) {
-        uint16_t slen = (tm->len < JCMK_TEXT_MAX) ? tm->len : JCMK_TEXT_MAX;
+        uint16_t slen = (tm->len < CORE_TEXT_SLOT_LEN - 1) ? tm->len : (CORE_TEXT_SLOT_LEN - 1);
         memcpy(coreTextBuf[coreTextTail].line, tm->text, slen);
         coreTextBuf[coreTextTail].line[slen] = '\0';
         coreTextTail = next;

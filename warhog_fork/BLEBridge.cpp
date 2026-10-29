@@ -36,7 +36,7 @@ static volatile bool pendingPing       = false;
 // setValue()+notify()s them. 224 bytes holds the largest realistic record
 // (32-char escaped SSID + long auth string + GPS + timestamp).
 #define REC_SLOT_LEN 224
-#define REC_RING     32
+#define REC_RING     16
 struct RecSlot { char json[REC_SLOT_LEN]; };
 static RecSlot  recRing[REC_RING];
 static volatile uint8_t recHead = 0;   // drained by tick
@@ -126,11 +126,18 @@ void bleBridgeBegin() {
   String name = "WarHog-Core";
   if (cfg.deviceName.length()) { name += " "; name += cfg.deviceName; }
 
-  NimBLEDevice::init(std::string(name.c_str()));
+  if (!NimBLEDevice::init(std::string(name.c_str()))) {
+    Serial.println("[BLE] NimBLEDevice::init failed");
+    return;
+  }
   NimBLEDevice::setMTU(247);                  // request a larger ATT MTU
   NimBLEDevice::setPower(9);                   // +9 dBm — max TX power (v2.x takes dBm int)
 
   bleServer = NimBLEDevice::createServer();
+  if (!bleServer) {
+    Serial.println("[BLE] createServer failed");
+    return;
+  }
   // false => don't let deinit(true) delete this static callback (it would
   // free() a non-heap pointer and assert on BLE teardown / mesh exit).
   bleServer->setCallbacks(&serverCb, false);
