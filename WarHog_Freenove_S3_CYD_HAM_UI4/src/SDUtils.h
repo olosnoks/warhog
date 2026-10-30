@@ -3,6 +3,10 @@
 
 bool   openLogFile();
 void   closeLogFile();
+// Time-based safety flush for the batched CSV writer — call every loop().
+// Writes out buffered rows that have waited longer than the flush window so a
+// partial batch is never lost on power-off.
+void   sdLogBufferTick();
 // Returns true if the row was actually written to the CSV, false if skipped
 // (SD/log file unavailable, or the SSID matches a configured whitelist entry).
 bool   appendWigleRow(const String& mac, const String& ssid, const String& auth,

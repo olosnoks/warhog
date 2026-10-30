@@ -375,6 +375,7 @@ void loop() {
     }
   }
 
+  sdLogBufferTick();   // time-based safety flush for the batched CSV writer
   batteryTestTick();
   batteryMonitorTick();
   bleScannerTick();
