@@ -202,10 +202,11 @@ static uint32_t       csvBytes      = 0;
 // powered off at the end of a run. Worst-case loss on an abrupt power-off is
 // one partial batch.
 //
-// The buffer is a fixed char block from PSRAM when the board has it (freeing
-// scarce internal RAM on S3 boards), falling back to internal RAM on boards
-// without PSRAM (C5/C6). Writing to SD from a PSRAM source is safe: FatFS
-// copies into its own sector cache (no DMA-from-PSRAM constraint).
+// The buffer is a fixed char block from PSRAM when the board has it (the XIAO
+// ESP32-C5 does — see board_build.arduino.memory_type in platformio.ini),
+// freeing ~25 KB of scarce internal RAM, and falls back to internal RAM on any
+// board without a usable SPIRAM region. Writing to SD from a PSRAM source is
+// safe: FatFS copies into its own sector cache (no DMA-from-PSRAM constraint).
 static const uint16_t SD_BATCH_LINES    = 100;     // rows per SD write
 static const uint32_t SD_BATCH_FLUSH_MS = 20000;   // 15–30 s safety window
 static const size_t   SD_ROW_MAX        = 256;     // worst-case bytes per row (+CRLF headroom)

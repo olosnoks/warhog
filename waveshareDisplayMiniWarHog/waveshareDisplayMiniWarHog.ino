@@ -264,8 +264,9 @@ static uint32_t       csvBytes      = 0;
 // batch of SD_BATCH_LINES rows instead of one SD write per network. A
 // time-based safety flush (SD_BATCH_FLUSH_MS, driven by sdLogBufferTick() from
 // loop()) drains a partial batch so rows are not lost when the device is
-// powered off at the end of a run. The buffer is taken from PSRAM when present,
-// else internal RAM (the C6 has no PSRAM, so it uses internal RAM here).
+// powered off at the end of a run. The buffer is taken from PSRAM when the
+// build has a usable SPIRAM region, else internal RAM (enable PSRAM in the
+// Arduino IDE board menu if this C6 module has it).
 // SD and the TFT share the SPI bus, so every SD access raises tft_cs first.
 #include "esp_heap_caps.h"
 static void closeLogFile();   // forward decls: drain path reopens the log
