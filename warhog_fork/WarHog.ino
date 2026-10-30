@@ -821,6 +821,8 @@ void loop() {
     }
   }
 
+  sdLogBufferTick();   // time-based safety flush for the batched CSV writer
+
   // Battery test tick (uncomment to enable)
   batteryTestTick();
 

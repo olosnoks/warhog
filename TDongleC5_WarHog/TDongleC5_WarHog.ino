@@ -530,6 +530,109 @@ static String normalizeSdPath(const char* dir, const char* nameIn) {
 static const uint32_t CSV_MAX_BYTES = 29u * 1024u * 1024u;  // < 30 MB
 static uint32_t       csvBytes      = 0;
 
+// ---- Batched CSV writer ----------------------------------------------------
+// Rows are accumulated in a RAM buffer and written to the SD card in a single
+// batch of SD_BATCH_LINES rows instead of one SD write per network. A
+// time-based safety flush (SD_BATCH_FLUSH_MS, driven by sdLogBufferTick() from
+// loop()) drains a partial batch so rows are not lost when the device is
+// powered off at the end of a run. The buffer is taken from PSRAM when present,
+// else internal RAM (the C5 has no PSRAM, so it uses internal RAM here).
+// SD and the TFT share the SPI bus, so every SD access raises tft_cs first.
+#include "esp_heap_caps.h"
+static void closeLogFile();   // forward decls: drain path reopens the log
+static bool openLogFile();
+static const uint16_t SD_BATCH_LINES    = 100;     // rows per SD write
+static const uint32_t SD_BATCH_FLUSH_MS = 20000;   // 15–30 s safety window
+static const size_t   SD_ROW_MAX        = 256;     // worst-case bytes per row (+CRLF)
+static const size_t   SD_BATCH_CAP      = (size_t)SD_BATCH_LINES * SD_ROW_MAX;  // ~25 KB
+static char*    s_logBuf      = nullptr;
+static size_t   s_logBufLen   = 0;
+static uint16_t s_logBufLines = 0;
+static uint32_t s_bufStartMs  = 0;
+
+static bool ensureLogBuffer() {
+  if (s_logBuf) return true;
+  const char* where = "PSRAM";
+  s_logBuf = (char*)heap_caps_malloc(SD_BATCH_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!s_logBuf) { where = "internal"; s_logBuf = (char*)heap_caps_malloc(SD_BATCH_CAP, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); }
+  if (!s_logBuf) { where = "internal"; s_logBuf = (char*)malloc(SD_BATCH_CAP); }
+  if (s_logBuf) Serial.printf("[SD] CSV batch buffer: %u bytes (%s)\n", (unsigned)SD_BATCH_CAP, where);
+  else          Serial.println("[SD] CSV batch buffer alloc FAILED — writing rows unbuffered");
+  return s_logBuf != nullptr;
+}
+
+static void drainLogBuffer() {
+  if (s_logBufLines == 0) return;
+  if (!sdOk || !logFile || !s_logBuf) { s_logBufLen = 0; s_logBufLines = 0; return; }
+
+  size_t len = s_logBufLen;   // reset counters up front; bytes stay intact for retry
+  s_logBufLen = 0;
+  s_logBufLines = 0;
+
+  digitalWrite(PINS.tft_cs, HIGH);   // deselect TFT before touching the shared SPI bus
+  size_t written = logFile.write((const uint8_t*)s_logBuf, len);
+  csvBytes += (uint32_t)written;
+  logFile.flush();
+  yield();
+
+  static uint8_t consecFails = 0;
+  if (len > 0 && written < len) {
+    consecFails++;
+    Serial.printf("[SD] Batch write short (%u/%u bytes, %u consecutive)\n",
+                  (unsigned)written, (unsigned)len, consecFails);
+    if (consecFails >= 3) {
+      Serial.println("[SD] Attempting log reopen...");
+      closeLogFile();
+      if (openLogFile()) {
+        Serial.println("[SD] Reopen OK — retrying batch");
+        digitalWrite(PINS.tft_cs, HIGH);
+        logFile.write((const uint8_t*)s_logBuf, len);
+        logFile.flush();
+        consecFails = 0;
+      } else {
+        Serial.println("[SD] Reopen FAILED — SD marked unusable");
+        sdOk = false;
+      }
+    }
+  } else {
+    consecFails = 0;
+  }
+}
+
+static void flushLogBuffer() {
+  drainLogBuffer();
+  if (sdOk && logFile && csvBytes >= CSV_MAX_BYTES) {
+    Serial.println("[SD] CSV size cap reached, rotating log file");
+    closeLogFile();
+    openLogFile();
+  }
+}
+
+static void bufferLogLine(const char* line, size_t len) {
+  if (!sdOk || !logFile) return;
+  if (!ensureLogBuffer()) {                 // alloc failed — write straight through
+    digitalWrite(PINS.tft_cs, HIGH);
+    size_t w = logFile.println(line);
+    csvBytes += (uint32_t)w;
+    logFile.flush();
+    return;
+  }
+  if (len + 2 > SD_ROW_MAX) len = SD_ROW_MAX - 2;
+  if (s_logBufLen + len + 2 > SD_BATCH_CAP) flushLogBuffer();
+  if (s_logBufLines == 0) s_bufStartMs = millis();
+  memcpy(s_logBuf + s_logBufLen, line, len);
+  s_logBufLen += len;
+  s_logBuf[s_logBufLen++] = '\r';
+  s_logBuf[s_logBufLen++] = '\n';
+  s_logBufLines++;
+  if (s_logBufLines >= SD_BATCH_LINES) flushLogBuffer();
+}
+
+static void sdLogBufferTick() {
+  if (s_logBufLines == 0) return;
+  if ((millis() - s_bufStartMs) >= SD_BATCH_FLUSH_MS) flushLogBuffer();
+}
+
 // Sanitise device name for filename/header use
 static String tdongleSanitiseName(const String& raw) {
   String s = raw; s.replace(" ", "_");
@@ -563,6 +666,7 @@ static String newCsvFilename() {
 }
 
 static void closeLogFile() {
+  drainLogBuffer();   // persist any buffered rows before the handle goes away
   if (logFile) {
     digitalWrite(PINS.tft_cs, HIGH);
     logFile.flush();
@@ -631,12 +735,8 @@ static bool appendWigleRow(const String& mac, const String& ssid, const String& 
     if (cfg.ssidWhitelist[i].length() > 0 && cfg.ssidWhitelist[i] == ssid) return false;
   }
 
-  // Rotate CSV before it reaches the size cap so every file stays < 30 MB
-  if (csvBytes >= CSV_MAX_BYTES) {
-    Serial.println("[SD] CSV size cap reached, rotating log file");
-    closeLogFile();
-    if (!openLogFile()) return false;
-  }
+  // Size-cap rotation is handled at flush time (flushLogBuffer), after the
+  // buffered batch is safely on the card.
 
   // Frequency in MHz (WiGLE 1.6)
   uint32_t freq = 0;
@@ -665,47 +765,10 @@ static bool appendWigleRow(const String& mac, const String& ssid, const String& 
                   len, (unsigned)sizeof(line));
   }
 
-  digitalWrite(PINS.tft_cs, HIGH);
-  size_t written = logFile.println(line);
-  csvBytes += (uint32_t)written;
-
-  // Detect silent write failure — if println() returns 0 for a non-empty line,
-  // the SD card or file handle is broken. Attempt to reopen the log file once;
-  // if that also fails, mark SD as unusable until next boot.
-  if (written == 0 && len > 0) {
-    static uint8_t consecFails = 0;
-    consecFails++;
-    Serial.printf("[SD] Write failed (%u consecutive)\n", consecFails);
-    if (consecFails >= 3) {
-      Serial.println("[SD] Attempting log reopen...");
-      closeLogFile();
-      if (openLogFile()) {
-        Serial.println("[SD] Reopen OK — retrying write");
-        logFile.println(line);  // best-effort retry
-        consecFails = 0;
-      } else {
-        Serial.println("[SD] Reopen FAILED — SD marked unusable");
-        sdOk = false;
-      }
-    }
-    return false;
-  }
-
-  // Flush less often to avoid stalls (SD writes can block hard). Threshold
-  // tightened from 25 to 16 lines so large batches get broken into smaller
-  // chunks; yield() after each flush gives WiFi/GPS/web-server/watchdog a
-  // chance to run between chunks instead of only after the whole batch.
-  static uint32_t lastFlushMs = 0;
-  static uint32_t linesSinceFlush = 0;
-  linesSinceFlush++;
-
-  if (linesSinceFlush >= 16 || (millis() - lastFlushMs) >= 2000) {
-    digitalWrite(PINS.tft_cs, HIGH);
-    logFile.flush();
-    yield();
-    lastFlushMs = millis();
-    linesSinceFlush = 0;
-  }
+  // Buffer the row; it reaches the card as part of the next batch write (full
+  // batch, or the time-based safety flush). Silent-write-failure detection and
+  // reopen/retry now live in drainLogBuffer().
+  bufferLogLine(line, (size_t)len);
   return true;
 }
 
@@ -4297,12 +4360,9 @@ static void processScanResults(int n) {
 
   WiFi.scanDelete();
 
-  // Force flush after each scan batch so data reaches the SD card promptly.
-  // Minimises data loss if the device loses power between scan cycles.
-  if (wrote > 0 && sdOk && logFile) {
-    digitalWrite(PINS.tft_cs, HIGH);
-    logFile.flush();
-  }
+  // Rows are accumulated by the batched CSV writer and flushed once a batch
+  // fills or on the time-based safety flush (sdLogBufferTick in loop()). No
+  // per-scan flush — that would defeat batching.
 
   if (wrote > 0) ledPulseGreen();
   Serial.printf("[SCAN] Wrote %lu rows\n", (unsigned long)wrote);
@@ -4705,6 +4765,8 @@ void setup() {
 // ================================================================
 void loop() {
   server.handleClient();
+
+  sdLogBufferTick();   // time-based safety flush for the batched CSV writer
 
   // AP window
   if (apWindowActive && WiFi.getMode() == WIFI_AP_STA) {

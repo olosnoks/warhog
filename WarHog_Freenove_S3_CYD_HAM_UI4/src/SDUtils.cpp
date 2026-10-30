@@ -1,5 +1,6 @@
 #include "SDUtils.h"
 #include "Globals.h"
+#include "esp_heap_caps.h"   // heap_caps_malloc — batch buffer in PSRAM when present
 
 // ---- Path helpers ----
 
@@ -145,11 +146,34 @@ static uint32_t       csvBytes      = 0;
 //      a run.
 // Worst-case loss on an abrupt power-off is one partial batch: fewer than
 // SD_BATCH_LINES rows, no older than SD_BATCH_FLUSH_MS.
+//
+// The buffer is a fixed char block allocated from PSRAM when the board has it
+// (freeing ~25 KB of scarce internal RAM on the S3/W550), falling back to
+// internal RAM on boards without PSRAM. Writing to SD from a PSRAM source is
+// safe: FatFS copies into its own sector cache, so there is no DMA-from-PSRAM
+// constraint (that only affects DMA reads).
 static const uint16_t SD_BATCH_LINES    = 100;     // rows per SD write
 static const uint32_t SD_BATCH_FLUSH_MS = 20000;   // 15–30 s safety window
-static String   s_logBuf;                // accumulated "row\r\n" text
+static const size_t   SD_ROW_MAX        = 256;     // worst-case bytes per row (+CRLF headroom)
+static const size_t   SD_BATCH_CAP      = (size_t)SD_BATCH_LINES * SD_ROW_MAX;  // ~25 KB
+static char*    s_logBuf      = nullptr; // batch buffer (PSRAM if available)
+static size_t   s_logBufLen   = 0;       // bytes currently used
 static uint16_t s_logBufLines = 0;       // rows currently buffered
 static uint32_t s_bufStartMs  = 0;       // millis() of the first buffered row
+
+// Allocate the batch buffer once: PSRAM first, then internal RAM, then plain
+// malloc as a last resort. Kept for the program's lifetime (reused across log
+// rotations). Returns false if no allocation succeeded.
+static bool ensureLogBuffer() {
+  if (s_logBuf) return true;
+  const char* where = "PSRAM";
+  s_logBuf = (char*)heap_caps_malloc(SD_BATCH_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!s_logBuf) { where = "internal"; s_logBuf = (char*)heap_caps_malloc(SD_BATCH_CAP, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); }
+  if (!s_logBuf) { where = "internal"; s_logBuf = (char*)malloc(SD_BATCH_CAP); }
+  if (s_logBuf) Serial.printf("[SD] CSV batch buffer: %u bytes (%s)\n", (unsigned)SD_BATCH_CAP, where);
+  else          Serial.println("[SD] CSV batch buffer alloc FAILED — writing rows unbuffered");
+  return s_logBuf != nullptr;
+}
 
 // Sanitise a user-provided device name for safe use in filenames.
 // Keeps alphanumerics, hyphens, underscores; replaces spaces with _;
@@ -239,9 +263,8 @@ bool openLogFile() {
   // Seed the byte counter with the header size so the cap accounts for it.
   csvBytes = (uint32_t)logFile.size();
 
-  // Pre-size the batch buffer so accumulating a full batch doesn't repeatedly
-  // realloc/fragment the heap (one WiGLE row averages ~140 B).
-  s_logBuf.reserve((size_t)SD_BATCH_LINES * 160u);
+  // Make sure the batch buffer exists (PSRAM-backed when available).
+  ensureLogBuffer();
 
   Serial.println("[SD] Log file initialized with WiGLE headers");
   return true;
@@ -253,34 +276,33 @@ bool openLogFile() {
 // re-entering the rotation path.
 static void drainLogBuffer() {
   if (s_logBufLines == 0) return;
-  if (!sdOk || !logFile) { s_logBuf = ""; s_logBufLines = 0; return; }
+  if (!sdOk || !logFile || !s_logBuf) { s_logBufLen = 0; s_logBufLines = 0; return; }
 
-  // Snapshot and clear up front: the reopen path below closes/reopens the log
-  // file (which calls back into this function), and starting from an empty
-  // buffer means that call is a no-op instead of corrupting a half-written batch.
-  String batch = s_logBuf;
-  s_logBuf = "";
+  // Reset the counters up front (not the bytes): the reopen path below
+  // closes/reopens the log file, which calls back into this function, and an
+  // empty count makes that call a no-op. The buffer bytes stay intact so the
+  // retry below can re-send the same batch.
+  size_t len = s_logBufLen;
+  s_logBufLen = 0;
   s_logBufLines = 0;
-  s_logBuf.reserve((size_t)SD_BATCH_LINES * 160u);
 
-  size_t want    = batch.length();
-  size_t written = logFile.print(batch);
+  size_t written = logFile.write((const uint8_t*)s_logBuf, len);
   csvBytes += (uint32_t)written;
   logFile.flush();   // commit the batch to the card now, not on a later timer
 
-  // Silent write failure — print() returns short. Reopen the log once; if that
+  // Silent write failure — write() returns short. Reopen the log once; if that
   // also fails, mark SD unusable until next boot (matches the old per-line path).
   static uint8_t consecFails = 0;
-  if (want > 0 && written < want) {
+  if (len > 0 && written < len) {
     consecFails++;
     Serial.printf("[SD] Batch write short (%u/%u bytes, %u consecutive)\n",
-                  (unsigned)written, (unsigned)want, consecFails);
+                  (unsigned)written, (unsigned)len, consecFails);
     if (consecFails >= 3) {
       Serial.println("[SD] Attempting log reopen...");
-      closeLogFile();              // buffer already empty here — no recursion
+      closeLogFile();              // buffer count already 0 here — no recursion
       if (openLogFile()) {
         Serial.println("[SD] Reopen OK — retrying batch");
-        logFile.print(batch);      // best-effort retry into the fresh file
+        logFile.write((const uint8_t*)s_logBuf, len);  // bytes still intact
         logFile.flush();
         consecFails = 0;
       } else {
@@ -327,9 +349,26 @@ void sdLogBufferTick() {
 static void writeLogLine(const String& line) {
   if (!sdOk || !logFile) return;
 
+  // No batch buffer (allocation failed) — fall back to writing the row straight
+  // to the file so logging still works, just without batching.
+  if (!ensureLogBuffer()) {
+    size_t w = logFile.println(line);
+    csvBytes += (uint32_t)w;
+    logFile.flush();
+    return;
+  }
+
+  size_t len = line.length();
+  if (len + 2 > SD_ROW_MAX) len = SD_ROW_MAX - 2;   // clamp a pathologically long row
+
+  // Flush first if this row (plus CRLF) wouldn't fit in the remaining space.
+  if (s_logBufLen + len + 2 > SD_BATCH_CAP) flushLogBuffer();
+
   if (s_logBufLines == 0) s_bufStartMs = millis();  // start this batch's timer
-  s_logBuf += line;
-  s_logBuf += "\r\n";
+  memcpy(s_logBuf + s_logBufLen, line.c_str(), len);
+  s_logBufLen += len;
+  s_logBuf[s_logBufLen++] = '\r';
+  s_logBuf[s_logBufLen++] = '\n';
   s_logBufLines++;
 
   if (s_logBufLines >= SD_BATCH_LINES) flushLogBuffer();
