@@ -1,7 +1,10 @@
 #include "IosEspCompat.h"
 #include "Globals.h"
+#include "Config.h"      // wardriverIsC5()
+#include "MeshNode.h"    // JCMK_CHANNELS, JCMK_NUM_CHANNELS, meshCoreActive
 #include <stdarg.h>
 #include <string.h>
+#include <stdlib.h>      // atoi, strtol
 
 // ================================================================
 //  iosESP GATT UUIDs (PROTOCOL.md v1.5)
@@ -12,13 +15,29 @@ static const char* IE_SERVICE_UUID = "47686F73-7445-5350-4272-696467655376";
 #define IE_CH_CTRL  "0347686F-7374-4553-5042-72694C525443"   // write / write-NR
 #define IE_CH_OTA   "0447686F-7374-4553-5042-72694F544144"   // write-NR (stubbed)
 
-// Firmware/chip identity reported in WD:CAPS / info.
-#define IE_FW_VERSION "warhog-1.0"
+// Chip identity reported in WD:CAPS / info.
 #ifdef CONFIG_IDF_TARGET
 #define IE_CHIP CONFIG_IDF_TARGET      // "esp32s3", "esp32c5", ...
 #else
 #define IE_CHIP "esp32"
 #endif
+
+// Report Piglet's version as a numeric 1<major>.<minor>.00 (e.g. v2.7 -> "12.07.00")
+// so Wardrive Go's number-by-number "outdated firmware" check never fires, while
+// still tracking the real FIRMWARE_VERSION for support. Mirrors upstream Piglet's
+// wgFwVersion() — this is what makes the app accept the board as current.
+static const char* ieFwVersion() {
+  static char buf[16] = "";
+  if (buf[0]) return buf;
+  const char* v = FIRMWARE_VERSION;
+  if (*v == 'v' || *v == 'V') v++;
+  int major = atoi(v);
+  int minor = 0;
+  const char* dot = strchr(v, '.');
+  if (dot) minor = atoi(dot + 1);
+  snprintf(buf, sizeof(buf), "1%d.%02d.00", major, minor);
+  return buf;
+}
 
 // Frame header (little-endian): GB ver type status flags id[4] len[2]
 #define FR_MAGIC_0 0x47
@@ -48,9 +67,64 @@ static uint32_t ieSweeps    = 0;
 static uint32_t ieLastStat  = 0;
 static bool     ieRebootReq = false;
 
-// Channels we advertise as our scan plan (2.4 GHz; the mesh feeds us all bands,
-// but the app only needs a plausible plan string for its UI).
-static const char* IE_CHANS = "1,2,3,4,5,6,7,8,9,10,11,12,13";
+// Channel plan reported in WD:CAPS / WD:PLAN and used to filter forwarded APs.
+// Supported set is 2.4 GHz only, unless this is a dual-band C5 or we're a Core
+// (a Core relays whatever band each node reports, so it is never radio-limited).
+// The app can narrow the active plan via `-ch` on `wdstream start` or `ch`.
+// Mirrors upstream Piglet's WardriveGoBLE channel handling.
+static uint8_t ieSupportedCount = 0;   // # of leading JCMK_CHANNELS we support
+static uint8_t iePlan[48];             // active plan (subset the app asked for)
+static uint8_t iePlanCount   = 0;
+
+static bool ieDualBand() { return meshCoreActive || wardriverIsC5(); }
+
+static void ieComputeSupported() {
+  const bool dual = ieDualBand();
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < JCMK_NUM_CHANNELS; i++) {
+    if (!dual && JCMK_CHANNELS[i] > 14) break;   // 2.4 GHz prefix only
+    n++;
+  }
+  ieSupportedCount = n;
+}
+static bool ieChannelSupported(uint8_t ch) {
+  for (uint8_t i = 0; i < ieSupportedCount; i++) if (JCMK_CHANNELS[i] == ch) return true;
+  return false;
+}
+static bool ieChannelInPlan(int ch) {
+  for (uint8_t i = 0; i < iePlanCount; i++) if (iePlan[i] == (uint8_t)ch) return true;
+  return false;
+}
+static void iePlanResetToAll() {
+  ieComputeSupported();
+  memcpy(iePlan, JCMK_CHANNELS, ieSupportedCount);
+  iePlanCount = ieSupportedCount;
+}
+static int ieFormatChannelList(char* buf, size_t cap, const uint8_t* ch, uint8_t n) {
+  int len = 0;
+  for (uint8_t i = 0; i < n && len < (int)cap - 5; i++)
+    len += snprintf(buf + len, cap - len, i ? ",%u" : "%u", (unsigned)ch[i]);
+  return len;
+}
+// `-ch 1,6,11` / `ch 1,6,11` / `ch all`: narrow (or reset) the active plan to
+// supported channels the app asked for; empty/invalid falls back to all.
+static void ieSetChannelPlan(const char* s) {
+  while (*s == ' ') s++;
+  if (!*s || !strcmp(s, "all")) { iePlanResetToAll(); return; }
+  uint8_t tmp[48]; uint8_t n = 0;
+  while (*s && n < sizeof(tmp)) {
+    while (*s == ',' || *s == ' ') s++;
+    if (*s < '0' || *s > '9') break;
+    char* end; long v = strtol(s, &end, 10); s = end;
+    if (v > 0 && v <= 255 && ieChannelSupported((uint8_t)v)) {
+      bool dup = false;
+      for (uint8_t i = 0; i < n; i++) if (tmp[i] == (uint8_t)v) dup = true;
+      if (!dup) tmp[n++] = (uint8_t)v;
+    }
+  }
+  if (n == 0) { iePlanResetToAll(); return; }
+  memcpy(iePlan, tmp, n); iePlanCount = n;
+}
 
 // Inbound command ring (write cb enqueues raw bytes; tick drains/replies).
 #define IE_CMD_SLOT_LEN 128
@@ -111,8 +185,12 @@ static void ieEmit(const char* fmt, ...) {
 //  WD: output helpers
 // ================================================================
 static void ieSendCaps() {
-  ieEmit("WD:CAPS fw=%s chip=%s bands=2g ota=0 bt=0 gps=%d cap=0 chans=%s",
-         IE_FW_VERSION, IE_CHIP, ieGpsPresent ? 1 : 0, IE_CHANS);
+  ieComputeSupported();
+  char chanBuf[200];
+  ieFormatChannelList(chanBuf, sizeof(chanBuf), JCMK_CHANNELS, ieSupportedCount);
+  ieEmit("WD:CAPS fw=%s chip=%s bands=%s ota=0 bt=0 gps=%d cap=0 chans=%s",
+         ieFwVersion(), IE_CHIP, ieDualBand() ? "2g,5g" : "2g",
+         ieGpsPresent ? 1 : 0, chanBuf);
 }
 
 // GPS presence is reported in WD:CAPS, which goes out exactly once per stream
@@ -131,7 +209,9 @@ static void ieSendHandshake() {
   ieSendCaps();
   ieEmit("WD:MODE mode=wifi");
   ieEmit("WD:BEGIN type=wifi interval=0 channel=auto");
-  ieEmit("WD:PLAN chans=%s", IE_CHANS);
+  char planBuf[200];
+  ieFormatChannelList(planBuf, sizeof(planBuf), iePlan, iePlanCount);
+  ieEmit("WD:PLAN chans=%s", planBuf);
 }
 
 static void ieStartStreaming() {
@@ -178,7 +258,7 @@ static void ieCmdHelp() {
   ieEmit("commands: wdstream start|stop, start, stop, caps, info, status, ch, led on|off, reboot");
 }
 static void ieCmdInfo() {
-  ieEmit("iosESP %s chip=%s name=%s uptime=%lus", IE_FW_VERSION, IE_CHIP, ieName,
+  ieEmit("iosESP %s chip=%s name=%s uptime=%lus", ieFwVersion(), IE_CHIP, ieName,
          (unsigned long)(millis() / 1000));
 }
 static void ieCmdStatus() {
@@ -219,7 +299,9 @@ static void ieHandleText(const char* text, uint16_t tlen) {
   else if (!strcmp(word, "info"))   ieCmdInfo();
   else if (!strcmp(word, "status")) ieCmdStatus();
   else if (!strcmp(word, "caps"))   ieSendCaps();
-  else if (!strcmp(word, "ch"))     ieEmit("WD:PLAN chans=%s", IE_CHANS);
+  else if (!strcmp(word, "ch"))     { ieSetChannelPlan(rest);
+                                      char pb[200]; ieFormatChannelList(pb, sizeof(pb), iePlan, iePlanCount);
+                                      ieEmit("WD:PLAN chans=%s", pb); }
   else if (!strcmp(word, "led"))    { bool on = strcmp(rest, "off"); if (on) ieLedIdentify();
                                       ieEmit("LED %s", on ? "on" : "off"); }
   else if (!strcmp(word, "reboot")) { ieEmit("rebooting"); ieRebootReq = true; }
@@ -229,7 +311,11 @@ static void ieHandleText(const char* text, uint16_t tlen) {
   else if (!strcmp(word, "cap"))    ieEmit("mode Wi-Fi  ·  cap unsupported");
   else if (!strcmp(word, "wdstream")) {
     if (strstr(rest, "stop")) ieStopStreaming();
-    else                      ieStartStreaming();   // -ch/-wifi flags: we scan all, always wifi
+    else {
+      const char* chp = strstr(rest, "-ch");   // honor a channel subset the app requests
+      if (chp) ieSetChannelPlan(chp + 3);
+      ieStartStreaming();                       // (-wifi is implied; we always stream wifi)
+    }
   }
   else { ieEmit("unknown command '%s'", word); ieCmdHelp(); }
 }
@@ -331,6 +417,7 @@ void iosEspCompatAttach(NimBLEServer* server) {
   ieStreaming = false;
   ieTxHead = ieTxTail = 0;
   ieCmdHead = ieCmdTail = 0;
+  iePlanResetToAll();          // default plan = every supported channel
   ieActive = true;
 }
 
@@ -430,6 +517,7 @@ static char lowerHex(uint8_t v) { return (char)(v < 10 ? '0' + v : 'a' + (v - 10
 void iosEspCompatPushAp(const char* bssid, const char* ssid,
                         int channel, int rssi, const char* auth) {
   if (!ieActive || !ieNotifyOn || !ieStreaming) return;
+  if (iePlanCount && !ieChannelInPlan(channel)) return;   // app narrowed the plan
   if (rssi < -128) rssi = -128; else if (rssi > 0) rssi = rssi;   // dBm, negative
 
   // SSID -> lower-case hex; empty => hidden.

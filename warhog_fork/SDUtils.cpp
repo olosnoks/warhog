@@ -105,31 +105,31 @@ bool sdTryRecover() {
   return ok;
 }
 
-// ---- Move to uploaded ----
-
-bool moveToUploaded(const String& srcPath) {
+// ---- Move a file into an SD subfolder ----
+// Shared by moveToUploaded()/moveToArchived(). destDir is an absolute folder
+// such as "/uploaded" or "/archived" (no trailing slash). Tries SD.rename and
+// falls back to copy+delete for picky SD libs.
+static bool moveToFolder(const String& srcPath, const char* destDir) {
   if (!sdOk) return false;
   if (!SD.exists(srcPath)) {
-    Serial.print("[SD] moveToUploaded: source missing, attempting recovery: ");
-    Serial.println(srcPath);
+    Serial.printf("[SD] moveToFolder: source missing, attempting recovery: %s\n", srcPath.c_str());
     if (!sdTryRecover() || !SD.exists(srcPath)) {
-      Serial.print("[SD] moveToUploaded: source missing: ");
-      Serial.println(srcPath);
+      Serial.printf("[SD] moveToFolder: source missing: %s\n", srcPath.c_str());
       return false;
     }
-    Serial.println("[SD] moveToUploaded: SD recovered, source found");
+    Serial.println("[SD] moveToFolder: SD recovered, source found");
   }
 
   // Ensure folder exists
-  if (!SD.exists("/uploaded")) {
-    Serial.println("[SD] Creating /uploaded ...");
-    if (!SD.mkdir("/uploaded")) {
-      Serial.println("[SD] ERROR: SD.mkdir(/uploaded) failed");
+  if (!SD.exists(destDir)) {
+    Serial.printf("[SD] Creating %s ...\n", destDir);
+    if (!SD.mkdir(destDir)) {
+      Serial.printf("[SD] ERROR: SD.mkdir(%s) failed\n", destDir);
       return false;
     }
   }
 
-  String dstPath = String("/uploaded/") + pathBasename(srcPath);
+  String dstPath = String(destDir) + "/" + pathBasename(srcPath);
 
   // If destination exists, remove it first (rename may fail otherwise)
   if (SD.exists(dstPath)) {
@@ -143,45 +143,52 @@ bool moveToUploaded(const String& srcPath) {
   Serial.print(" -> ");
   Serial.println(dstPath);
 
-  bool ok = SD.rename(srcPath, dstPath);
-  if (!ok) {
-    Serial.println("[SD] ERROR: SD.rename failed");
-    // Last resort: copy + delete (some SD libs are picky)
-    File in = SD.open(srcPath, FILE_READ);
-    if (!in) { Serial.println("[SD] copy fallback: open src failed"); return false; }
-
-    File out = SD.open(dstPath, FILE_WRITE);
-    if (!out) { Serial.println("[SD] copy fallback: open dst failed"); in.close(); return false; }
-
-    uint8_t buf[1024];
-    while (true) {
-      int n = in.read(buf, sizeof(buf));
-      if (n <= 0) break;
-      out.write(buf, n);
-      delay(0);
-    }
-    out.flush();
-    out.close();
-    in.close();
-
-    // Verify copy
-    if (!SD.exists(dstPath)) {
-      Serial.println("[SD] copy fallback: dst does not exist after write");
-      return false;
-    }
-
-    if (!SD.remove(srcPath)) {
-      Serial.println("[SD] copy fallback: WARNING failed to remove src after copy");
-      // still consider it moved-ish, but warn
-    }
-
-    Serial.println("[SD] copy fallback: OK");
+  if (SD.rename(srcPath, dstPath)) {
+    Serial.println("[SD] Move OK");
     return true;
   }
 
-  Serial.println("[SD] Move OK");
+  Serial.println("[SD] ERROR: SD.rename failed");
+  // Last resort: copy + delete (some SD libs are picky)
+  File in = SD.open(srcPath, FILE_READ);
+  if (!in) { Serial.println("[SD] copy fallback: open src failed"); return false; }
+
+  File out = SD.open(dstPath, FILE_WRITE);
+  if (!out) { Serial.println("[SD] copy fallback: open dst failed"); in.close(); return false; }
+
+  uint8_t buf[1024];
+  while (true) {
+    int n = in.read(buf, sizeof(buf));
+    if (n <= 0) break;
+    out.write(buf, n);
+    delay(0);
+  }
+  out.flush();
+  out.close();
+  in.close();
+
+  // Verify copy
+  if (!SD.exists(dstPath)) {
+    Serial.println("[SD] copy fallback: dst does not exist after write");
+    return false;
+  }
+
+  if (!SD.remove(srcPath)) {
+    Serial.println("[SD] copy fallback: WARNING failed to remove src after copy");
+    // still consider it moved-ish, but warn
+  }
+
+  Serial.println("[SD] copy fallback: OK");
   return true;
 }
+
+// ---- Move to uploaded / archived ----
+bool moveToUploaded(const String& srcPath) { return moveToFolder(srcPath, "/uploaded"); }
+
+// Files the firmware would otherwise auto-delete (empty/header-only CSVs from the
+// boot/upload cleanup) are moved here instead, so the device never silently
+// removes a file of its own accord.
+bool moveToArchived(const String& srcPath) { return moveToFolder(srcPath, "/archived"); }
 
 // ---- Log file ----
 
@@ -191,7 +198,7 @@ bool moveToUploaded(const String& srcPath) {
 // SSIDs or RCOIs can't push a file over. The ~1 MB of headroom below 30 MB
 // absorbs the final row plus the next file's header. When the cap is reached,
 // the active CSV is closed and a fresh one is opened with proper WiGLE headers.
-static const uint32_t CSV_MAX_BYTES = 29u * 1024u * 1024u;  // < 30 MB
+static const uint32_t CSV_MAX_BYTES = 9u * 1024u * 1024u;  // < 10 MB: Wardrift /v1/ingest/signals caps raw uploads at 10 MiB (and 200k records); 9 MiB leaves margin for one batch of overshoot. Still fine for WiGLE/WDGWars.
 static uint32_t       csvBytes      = 0;
 
 // ---- Batched CSV writer ----------------------------------------------------

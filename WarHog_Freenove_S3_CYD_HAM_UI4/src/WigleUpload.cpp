@@ -992,8 +992,8 @@ void deleteEmptyCsvs() {
 
   for (const String& path : toDelete) {
     if (!csvHasDataRows(path)) {
-      Serial.printf("[CLEANUP] Empty CSV, deleting: %s\n", pathBasename(path).c_str());
-      SD.remove(path);
+      Serial.printf("[CLEANUP] Empty CSV, archiving: %s\n", pathBasename(path).c_str());
+      moveToArchived(path);
     }
   }
 }
@@ -1080,9 +1080,9 @@ uint32_t uploadAllCsvsToWigle(int maxFiles) {
 
     // Guard: skip and delete header-only files (no scan data worth uploading)
     if (!csvHasDataRows(paths[i])) {
-      Serial.printf("[UPLOAD] Empty CSV (no data rows), deleting: %s\n",
+      Serial.printf("[UPLOAD] Empty CSV (no data rows), archiving: %s\n",
                     pathBasename(paths[i]).c_str());
-      SD.remove(paths[i]);
+      moveToArchived(paths[i]);
       uploadDoneFiles++;
       updateOLED(0);
       continue;
@@ -1215,9 +1215,9 @@ uint32_t uploadAllCsvsToWdgwars(int maxFiles) {
 
     // Guard: skip and delete header-only files
     if (!csvHasDataRows(paths[i])) {
-      Serial.printf("[UPLOAD] Empty CSV (no data rows), deleting: %s\n",
+      Serial.printf("[UPLOAD] Empty CSV (no data rows), archiving: %s\n",
                     pathBasename(paths[i]).c_str());
-      SD.remove(paths[i]);
+      moveToArchived(paths[i]);
       uploadDoneFiles++;
       updateOLED(0);
       continue;
@@ -1308,9 +1308,9 @@ uint32_t uploadAllCsvsToWardrift(int maxFiles) {
 
     // Guard: skip and delete header-only files
     if (!csvHasDataRows(paths[i])) {
-      Serial.printf("[UPLOAD] Empty CSV (no data rows), deleting: %s\n",
+      Serial.printf("[UPLOAD] Empty CSV (no data rows), archiving: %s\n",
                     pathBasename(paths[i]).c_str());
-      SD.remove(paths[i]);
+      moveToArchived(paths[i]);
       uploadDoneFiles++;
       updateOLED(0);
       continue;

@@ -20,3 +20,6 @@ String normalizeSdPath(const char* dir, const char* nameIn);
 String pathBasename(const String& p);
 bool   isAllowedDataPath(const String& p);
 bool   moveToUploaded(const String& srcPath);
+// Move a file into /archived instead of deleting it. Used by the empty-CSV
+// auto-cleanup so the device never silently removes a file.
+bool   moveToArchived(const String& srcPath);

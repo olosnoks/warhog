@@ -1057,9 +1057,9 @@ void deleteEmptyCsvs() {
   for (const String& path : toDelete) {
     uint32_t sz = 0;
     if (!csvHasDataRows(path, &sz)) {
-      Serial.printf("[CLEANUP] Empty CSV (%u bytes), deleting: %s\n", (unsigned)sz, pathBasename(path).c_str());
-      if (!SD.remove(path)) {
-        Serial.printf("[CLEANUP] WARNING: SD.remove failed for %s -- file left in place\n", pathBasename(path).c_str());
+      Serial.printf("[CLEANUP] Empty CSV (%u bytes), archiving: %s\n", (unsigned)sz, pathBasename(path).c_str());
+      if (!moveToArchived(path)) {
+        Serial.printf("[CLEANUP] WARNING: archive failed for %s -- file left in place\n", pathBasename(path).c_str());
       }
     }
   }
@@ -1152,10 +1152,10 @@ uint32_t uploadAllCsvsToWigle(int maxFiles) {
     {
       uint32_t emptySz = 0;
       if (!csvHasDataRows(paths[i], &emptySz)) {
-        Serial.printf("[UPLOAD] Empty CSV (%u bytes, no data rows), deleting: %s\n",
+        Serial.printf("[UPLOAD] Empty CSV (%u bytes, no data rows), archiving: %s\n",
                       (unsigned)emptySz, pathBasename(paths[i]).c_str());
-        if (!SD.remove(paths[i])) {
-          Serial.printf("[UPLOAD] WARNING: SD.remove failed for %s -- file left in place\n", pathBasename(paths[i]).c_str());
+        if (!moveToArchived(paths[i])) {
+          Serial.printf("[UPLOAD] WARNING: archive failed for %s -- file left in place\n", pathBasename(paths[i]).c_str());
         }
         uploadDoneFiles++;
         updateOLED(0);
@@ -1295,10 +1295,10 @@ uint32_t uploadAllCsvsToWdgwars(int maxFiles) {
     {
       uint32_t emptySz = 0;
       if (!csvHasDataRows(paths[i], &emptySz)) {
-        Serial.printf("[UPLOAD] Empty CSV (%u bytes, no data rows), deleting: %s\n",
+        Serial.printf("[UPLOAD] Empty CSV (%u bytes, no data rows), archiving: %s\n",
                       (unsigned)emptySz, pathBasename(paths[i]).c_str());
-        if (!SD.remove(paths[i])) {
-          Serial.printf("[UPLOAD] WARNING: SD.remove failed for %s -- file left in place\n", pathBasename(paths[i]).c_str());
+        if (!moveToArchived(paths[i])) {
+          Serial.printf("[UPLOAD] WARNING: archive failed for %s -- file left in place\n", pathBasename(paths[i]).c_str());
         }
         uploadDoneFiles++;
         updateOLED(0);
@@ -1394,10 +1394,10 @@ uint32_t uploadAllCsvsToWardrift(int maxFiles) {
     {
       uint32_t emptySz = 0;
       if (!csvHasDataRows(paths[i], &emptySz)) {
-        Serial.printf("[UPLOAD] Empty CSV (%u bytes, no data rows), deleting: %s\n",
+        Serial.printf("[UPLOAD] Empty CSV (%u bytes, no data rows), archiving: %s\n",
                       (unsigned)emptySz, pathBasename(paths[i]).c_str());
-        if (!SD.remove(paths[i])) {
-          Serial.printf("[UPLOAD] WARNING: SD.remove failed for %s -- file left in place\n", pathBasename(paths[i]).c_str());
+        if (!moveToArchived(paths[i])) {
+          Serial.printf("[UPLOAD] WARNING: archive failed for %s -- file left in place\n", pathBasename(paths[i]).c_str());
         }
         uploadDoneFiles++;
         updateOLED(0);
