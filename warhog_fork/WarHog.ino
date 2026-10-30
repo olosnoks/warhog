@@ -375,13 +375,13 @@ void setup() {
   Serial.print(" SCL="); Serial.println(pins.scl);
   Serial.print("[I2C] SDA level="); Serial.print(digitalRead(pins.sda));
   Serial.print(" SCL level="); Serial.println(digitalRead(pins.scl));
-  Wire.setClock(100000);
+  Wire.setClock(800000UL);
 
   bool lcdOk = false;
-  lcdOk = display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  lcdOk = display.begin(SSD1306_SWITCHCAPVCC, 0x3C, true, false);
   if (!lcdOk) {
     Serial.println("[LCD] 0x3C failed, trying 0x3D...");
-    lcdOk = display.begin(SSD1306_SWITCHCAPVCC, 0x3D);
+    lcdOk = display.begin(SSD1306_SWITCHCAPVCC, 0x3D, true, false);
   }
 
   if (lcdOk) {
@@ -828,5 +828,5 @@ void loop() {
   // Serial (observe-only; see scheduler/DESIGN.md §13). No behavior change.
   pigMetricsTick();
 
-  delay(10);
+  delay(pigWorldActive() ? 1 : 5);
 }

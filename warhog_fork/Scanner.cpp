@@ -4,6 +4,7 @@
 #include "GPS.h"
 #include "SDUtils.h"
 #include "BLEBridge.h"   // solo wardriving mirrors its own records to the phone app
+#include "PigWorld.h"
 
 static String authModeToString(wifi_auth_mode_t m) {
   switch (m) {
@@ -52,9 +53,12 @@ static void processScanResults(int n) {
 
   uint32_t wrote = 0;
   for (int i = 0; i < n; i++) {
-    // Periodic cooperative yield so a large batch (dense-area scan) doesn't
-    // monopolize the CPU between appendWigleRow()'s own flush-triggered yields.
-    if ((i & 0x0F) == 15) yield();
+    // Periodic cooperative yield + animation tick so a large batch (dense-area
+    // scan) doesn't freeze the 20 fps PigWorld OLED animation or monopolize CPU.
+    if ((i & 0x07) == 7) {
+      if (pigWorldActive()) pigWorldTick();
+      yield();
+    }
 
     int ch = WiFi.channel(i);
     bool chUnknown = (ch == 0);

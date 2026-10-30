@@ -4,7 +4,10 @@
 // ---- Global objects ----
 PinMap pins = PINS_C6; // default until detected/configured
 Config cfg;
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+// Match clkDuring and clkAfter at 800 kHz so Adafruit_SSD1306::display()
+// pushes frames 2x faster and does not tear down/re-add the ESP-IDF 5 I2C
+// device handle twice per frame inside i2cSetClock().
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1, 800000UL, 800000UL);
 TinyGPSPlus gps;
 HardwareSerial GPSSerial(1);
 WebServer server(80);

@@ -164,9 +164,21 @@ static void drawSky(const Sky& s, uint32_t t) {
   drawMoon(mx, my, s.moon);
 }
 
+// Fast sine approximation for terrain synthesis on soft-float RISC-V (ESP32-C5/C6)
+static float fastSin(float x) {
+  x *= 0.15915494f;  // 1 / (2 * PI)
+  x -= (int32_t)x;
+  if (x < 0.0f) x += 1.0f;
+  if (x > 0.5f) x -= 1.0f;
+  float ax = x < 0.0f ? -x : x;
+  float y  = x * (8.0f - 16.0f * ax);
+  float ay = y < 0.0f ? -y : y;
+  return 0.775f * y + 0.225f * y * ay;
+}
+
 // ---- far hills: a dotted ridge at a quarter of the ground speed, for depth ----
 static int farHill(int32_t fx) {
-  float v = 7 + 4.5f * sinf(fx * 0.031f) + 2.5f * sinf(fx * 0.083f + 1.3f) + 1.2f * sinf(fx * 0.17f + 0.5f);
+  float v = 7 + 4.5f * fastSin(fx * 0.031f) + 2.5f * fastSin(fx * 0.083f + 1.3f) + 1.2f * fastSin(fx * 0.17f + 0.5f);
   return v < 0 ? 0 : (int)v;
 }
 
@@ -241,7 +253,7 @@ static const int GROUND_BASE = 44;
 static const int TREE_CELL   = 2000;
 
 static int hill(int32_t wx) {
-  int h = (int)lroundf(2.4f * sinf(wx * 0.07f) + 1.2f * sinf(wx * 0.19f + 1.0f));
+  int h = (int)lroundf(2.4f * fastSin(wx * 0.07f) + 1.2f * fastSin(wx * 0.19f + 1.0f));
   return h < -4 ? -4 : h > 2 ? 2 : h;
 }
 static int groundAt(int sx, int32_t gx) { return GROUND_BASE + hill(sx + gx); }
@@ -289,14 +301,16 @@ static void drawWorld(int32_t gx, int scrollDir) {
     blit(tr.rows, tr.w, tr.h, sx, groundAt(sx + tr.w / 2, gx) - tr.h + 1, false, 1);
   }
 
+  int py = groundAt(-1, gx);
   for (int sx = 0; sx < SW; sx++) {
     int32_t  wx = sx + gx;
     uint32_t h  = groundHash((uint32_t)(wx + 100000));
-    int gy = groundAt(sx, gx), py = groundAt(sx - 1, gx);
+    int gy = groundAt(sx, gx);
     if (site.active && wx >= site.hx && wx < site.hx + 7) {        // dug hole
       bool edge = (wx == site.hx || wx == site.hx + 6);
       safePixel(sx, gy + (edge ? 1 : 2));
       if (!edge) safePixel(sx, gy + 3);
+      py = gy;
       continue;
     }
     safePixel(sx, gy);
@@ -304,6 +318,7 @@ static void drawWorld(int32_t gx, int scrollDir) {
     if (h % 7 == 0)  safePixel(sx, gy + 1 + (h >> 3) % 2);
     if (h % 29 == 0) { safePixel(sx, gy - 1); safePixel(sx + 1, gy - 2); safePixel(sx + 2, gy - 1); }
     if (h % 53 == 0) { safePixel(sx, gy - 1); safePixel(sx, gy - 2); safePixel(sx + 1, gy - 3); safePixel(sx - 1, gy - 3); }
+    py = gy;
   }
 
   if (site.active && site.mound) {

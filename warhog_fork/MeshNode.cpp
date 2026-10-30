@@ -5,6 +5,7 @@
 #include "SDUtils.h"
 #include "BLEBridge.h"
 #include "IosEspCompat.h"
+#include "PigWorld.h"
 #include "PigMetricsHook.h"   // Phase-0 instrumentation (observe-only)
 #include <esp_now.h>
 #include "esp_wifi.h"
@@ -1047,6 +1048,7 @@ static void nodeDoScanTick() {
       // Biscuit Pro), or Core type not yet confirmed. Unchanged from before.
       if (jcmkHaveCore) jcmkSetChannel(JCMK_ESPNOW_CH);
       for (int i = 0; i < n; i++) {
+        if ((i & 0x07) == 7 && pigWorldActive()) pigWorldTick();
         if (pigDedupSkip(i)) { pigMetricsOnSuppressed(); continue; }  // Phase 1 dedup (no-op unless flag)
         sweepYield++;                                                 // Phase 2 revisit ranking
         String bssid = WiFi.BSSIDstr(i);
@@ -1087,6 +1089,7 @@ static void nodeDoScanTick() {
       // schedules -- jcmkWarHogSlotTick() flushes this buffer only during
       // this node's own deterministic transmit slot.
       for (int i = 0; i < n; i++) {
+        if ((i & 0x07) == 7 && pigWorldActive()) pigWorldTick();
         if (pigDedupSkip(i)) { pigMetricsOnSuppressed(); continue; }  // Phase 1 dedup (no-op unless flag)
         sweepYield++;                                                 // Phase 2 revisit ranking
         String bssid = WiFi.BSSIDstr(i);
@@ -1215,9 +1218,13 @@ void enterNodeMode() {
 
   jcmkAddPeer(JCMK_BCAST);
 
-  // Random stagger before first scan (JCMK begin() pattern: delay(random(100,5000))).
-  // Prevents multiple nodes starting cycles in sync and flooding simultaneously.
-  delay(random(200, 3000));
+  // Random stagger before first scan so multiple nodes don't start cycles in sync.
+  // Keep PigWorld rendering during the wait so the OLED doesn't freeze.
+  uint32_t staggerEnd = millis() + (uint32_t)random(150, 750);
+  while ((int32_t)(millis() - staggerEnd) < 0) {
+    if (pigWorldActive()) pigWorldTick();
+    delay(10);
+  }
 
   meshNodeActive = true;
   Serial.println("[MESH] ESP-Now ready — searching for Core on ch 6...");
