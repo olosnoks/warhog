@@ -2310,10 +2310,66 @@ static void tkGet(const char* path){ if(!sdOk){Serial.println("WT ERR nosd");ret
 static void tkLs(const char* dir){ if(!sdOk){Serial.println("WT ERR nosd");return;} if(!*dir)dir="/"; tkSel(); File root=SD.open(dir); if(!root||!root.isDirectory()){ if(root)root.close(); Serial.println("WT ERR nodir"); return;} while(true){ tkSel(); File f=root.openNextFile(); if(!f)break; String p=normalizeSdPath(dir,f.name()); bool d=f.isDirectory(); uint32_t sz=d?0:(uint32_t)f.size(); f.close(); if(d)Serial.printf("WT DIR %s\n",p.c_str()); else Serial.printf("WT F %lu %s\n",(unsigned long)sz,p.c_str()); yield(); } tkSel(); root.close(); Serial.println("WT END"); }
 static void tkRm(const char* path){ if(!sdOk){Serial.println("WT ERR nosd");return;} if(!*path){Serial.println("WT ERR nopath");return;} if(currentCsvPath.length()&&currentCsvPath==path){Serial.println("WT ERR busy");return;} /* never unlink the open log */ tkSel(); bool ok=SD.remove(path); if(!ok)ok=SD.rmdir(path); /* empty folder */ Serial.println(ok?"WT OK":"WT ERR rm"); }
 static void tkPutFile(const char* args){ char path[160]; int i=0; while(args[i]&&args[i]!=' '&&i<159){path[i]=args[i];i++;} path[i]=0; const char* p=args+i; while(*p==' ')p++; uint32_t size=strtoul(p,(char**)&p,10); while(*p==' ')p++; uint32_t crc=strtoul(p,nullptr,16); if(!path[0]){Serial.println("WT ERR nopath");return;} tkStartPut(path,size,crc,false); }
+// ---- device control over USB: the Web UI's status / start / stop / upload / reboot ----
+// WT STAT -> WT STAT {json} (one write, so another task's log line can't split it)
+static void tkStat(){
+  DynamicJsonDocument doc(1024);
+  const bool sta = (WiFi.status() == WL_CONNECTED);
+  doc["scanningEnabled"]  = scanningEnabled;
+  doc["allowScan"]        = scanningEnabled && sdOk && (userScanOverride || !autoPaused) && !tkActive;
+  doc["toolSession"]      = tkActive;
+  doc["userScanOverride"] = userScanOverride;
+  doc["autoPaused"]       = autoPaused;
+  doc["sdOk"]             = sdOk;
+  doc["gpsFix"]           = gpsHasFix;
+  doc["found2g"]          = networksFound2G;
+  doc["found5g"]          = 0;
+  doc["c5Connected"]      = false;
+  doc["wifiConnected"]    = sta;
+  doc["staIp"]            = sta ? WiFi.localIP().toString() : String("");
+  doc["apActive"]         = apWindowActive;
+  doc["logFile"]          = currentCsvPath;
+  doc["uploading"]        = uploading;
+  doc["uploadLastResult"] = uploadLastResult;
+  doc["wigleTokenStatus"] = wigleTokenStatus;
+  doc["homeSsidSet"]      = cfg.homeSsid.length() > 0 && cfg.homeSsid != "EnterWifiHere";
+  doc["hasWigle"]         = cfg.wigleBasicToken.length() > 0;
+  doc["hasWdgwars"]       = false;
+  doc["hasWardrift"]      = false;
+  doc["uptimeMs"]         = millis();
+  String out; out.reserve(640); out = "WT STAT "; serializeJson(doc, out); out += '\n';
+  Serial.print(out);
+}
+// WT SCAN START|STOP. START also ends the toolkit session (the loop never scans while one is open).
+static void tkScan(const char* a){
+  if(!strcmp(a,"START")){ scanningEnabled=true; userScanOverride=true;  tkActive=false; Serial.println("WT OK scan on"); }
+  else if(!strcmp(a,"STOP")){ scanningEnabled=false; userScanOverride=true; Serial.println("WT OK scan off"); }
+  else Serial.println("WT ERR scansub");
+}
+// WT UPLOAD [all|wdgwars|wardrift] -> WT OK <uploaded> <total> <msg>. Joins homeSsid if needed, drops it again after.
+static void tkDropSta(){ WiFi.setAutoReconnect(false); WiFi.persistent(false); WiFi.disconnect(true,false); delay(50); WiFi.mode(WIFI_STA); }
+static void tkUpload(const char* a){
+  if(!sdOk){ Serial.println("WT ERR nosd"); return; }
+  const bool wdg=!strcmp(a,"wdgwars"), wdr=!strcmp(a,"wardrift"), all=(!*a||!strcmp(a,"all")||!strcmp(a,"wigle"));
+  if(!wdg&&!wdr&&!all){ Serial.println("WT ERR uploadsub"); return; }
+  if(wdg||wdr){ Serial.println("WT ERR nosvc"); return; }   // this board uploads to WiGLE only
+  bool raised=false;
+  if(WiFi.status()!=WL_CONNECTED){
+    if(cfg.homeSsid.length()==0||cfg.homeSsid=="EnterWifiHere"){ Serial.println("WT ERR nohome"); return; }
+    Serial.println("[TK] upload: connecting to home Wi-Fi");
+    if(!connectSTA(12000)){ tkDropSta(); Serial.println("WT ERR nowifi"); return; }
+    raised=true;
+  }
+  const uint32_t n = uploadAllCsvsToWigle();
+  String msg=uploadLastResult; msg.replace("\r"," "); msg.replace("\n"," ");
+  Serial.printf("WT OK %lu %lu %s\n",(unsigned long)n,(unsigned long)uploadTotalFiles,msg.c_str());
+  if(raised) tkDropSta();
+}
+static void tkReboot(){ closeLogFile(); Serial.println("WT OK reboot"); Serial.flush(); delay(200); ESP.restart(); }
 static bool serialToolActive(){ return tkActive; }
 static bool serialToolHandleLine(const char* line){
-  if(!(line[0]=='W'&&line[1]=='T'))return false; if(!(line[2]==' '||line[2]=='\0'))return false; tkLastMs=millis();
-  const char* rest=line+2; while(*rest==' ')rest++; char verb[12]; int vi=0; while(rest[vi]&&rest[vi]!=' '&&vi<11){verb[vi]=rest[vi];vi++;} verb[vi]=0; const char* args=rest+vi; while(*args==' ')args++;
+  if(!(line[0]=='W'&&line[1]=='T'))return false; if(!(line[2]==' '||line[2]=='\0'))return false;
+  const char* rest=line+2; while(*rest==' ')rest++; char verb[12]; int vi=0; while(rest[vi]&&rest[vi]!=' '&&vi<11){verb[vi]=rest[vi];vi++;} verb[vi]=0; const char* args=rest+vi; while(*args==' ')args++; if(strcmp(verb,"STAT")!=0) tkLastMs=millis();  /* status polls keep no session alive */
   if(tkPutting){ if(!strcmp(verb,"DATA")){tkPutData(args);return true;} if(!strcmp(verb,"ABORT")){tkPutCleanup(true);Serial.println("WT OK abort");return true;} tkPutCleanup(true); }
   if(!strcmp(verb,"HELLO")){ tkActive=true; Serial.println("WT HELLO fw=1.0 model=waveshare-c6 proto=1"); }
   else if(!strcmp(verb,"LS")) tkLs(args);
@@ -2321,6 +2377,10 @@ static bool serialToolHandleLine(const char* line){
   else if(!strcmp(verb,"PUT")) tkPutFile(args);
   else if(!strcmp(verb,"RM")) tkRm(args);
   else if(!strcmp(verb,"CFG")){ char sub[8]; int si=0; while(args[si]&&args[si]!=' '&&si<7){sub[si]=args[si];si++;} sub[si]=0; const char* sa=args+si; while(*sa==' ')sa++; if(!strcmp(sub,"GET")) tkGet(TK_CFG); else if(!strcmp(sub,"PUT")){ uint32_t size=strtoul(sa,(char**)&sa,10); while(*sa==' ')sa++; uint32_t crc=strtoul(sa,nullptr,16); tkStartPut(TK_CFG,size,crc,true);} else Serial.println("WT ERR cfgsub"); }
+  else if(!strcmp(verb,"STAT")) tkStat();
+  else if(!strcmp(verb,"SCAN")) tkScan(args);
+  else if(!strcmp(verb,"UPLOAD")) tkUpload(args);
+  else if(!strcmp(verb,"REBOOT")) tkReboot();
   else if(!strcmp(verb,"BYE")){ if(tkPutting)tkPutCleanup(true); tkActive=false; Serial.println("WT BYE"); }
   else if(verb[0]==0) Serial.println("WT PONG");
   else Serial.printf("WT ERR unknown %s\n",verb);
