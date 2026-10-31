@@ -157,6 +157,27 @@
   .feat b{color:var(--text);font-weight:600}
   .feat code{font-size:11.5px}
 
+  /* piglet toolkit (WebSerial) */
+  .tkStat{font-size:12px;color:var(--muted)} .tkStat.ok{color:var(--ok)} .tkStat.bad{color:var(--danger)}
+  .tkRow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+  .tkSub{border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;background:var(--card)}
+  .tkSub h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
+  #tkFiles{max-height:300px;overflow:auto}
+  .tkFile{display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--border);border-radius:7px;margin:5px 0;background:var(--input);font-size:12.5px}
+  .tkName{font-family:ui-monospace,Menlo,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tkSize{color:var(--muted);font-size:11.5px}
+  .tkMini{cursor:pointer;border:1px solid var(--inputBorder);background:var(--btn);color:var(--text);border-radius:6px;padding:4px 9px;font:600 11px system-ui,sans-serif}
+  .tkMini:hover{background:var(--btnHover)} .tkMini.danger{border-color:rgba(255,85,85,.4);color:var(--danger)}
+  .tkTabs{display:inline-flex;border:1px solid var(--inputBorder);border-radius:7px;overflow:hidden;margin-bottom:10px}
+  .tkTabs button{appearance:none;cursor:pointer;border:0;background:transparent;color:var(--muted);padding:5px 12px;font:600 11px system-ui,sans-serif}
+  .tkTabs button+button{border-left:1px solid var(--inputBorder)}
+  .tkTabs button.on{background:var(--accent);color:var(--primaryText)}
+  .tkField{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:12.5px}
+  .tkField>span{flex:0 0 160px;color:var(--muted)}
+  .tkField input[type=text],.tkField select{flex:1;min-width:0;padding:6px 9px;border-radius:6px;border:1px solid var(--inputBorder);background:var(--input);color:var(--text);font:400 12.5px system-ui,sans-serif}
+  #tkCfgRaw{width:100%;min-height:220px;background:var(--input);color:var(--text);border:1px solid var(--inputBorder);border-radius:7px;padding:10px;font:12px ui-monospace,Menlo,Consolas,monospace}
+  #tkLog{margin-top:10px;max-height:120px;overflow:auto;background:var(--input);border:1px solid var(--border);border-radius:7px;padding:8px;font:11px ui-monospace,Menlo,Consolas,monospace;color:var(--muted);white-space:pre-wrap}
+
   footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--border);color:var(--muted);font-size:12px;display:flex;gap:14px;flex-wrap:wrap;justify-content:space-between}
 </style>
 </head>
@@ -380,6 +401,61 @@ esptool --chip esp32c5 --no-stub write-flash 0x0 TDongleC5_Piglet.ino.merged.bin
   </div>
 
   <div class="card">
+    <h3>Piglet Toolkit <span class="fork">USB</span></h3>
+    <p class="muted" style="font-size:12.5px;margin:0 0 8px">
+      Manage the SD card and <code>wardriver.cfg</code> over the <b style="color:var(--text)">same USB cable</b> you flash with &mdash; no WiFi needed. Chrome/Edge desktop only.
+    </p>
+    <div class="tkRow">
+      <button class="flash" id="tkConnect" style="width:auto">&#9654; Connect over USB</button>
+      <span class="tkStat" id="tkStatus">disconnected</span>
+    </div>
+    <p class="unsupported" id="tkUnsupported" style="display:none">WebSerial needs Chrome or Edge on desktop.</p>
+
+    <div id="tkPanel" style="display:none">
+      <div class="tkSub">
+        <h4>SD file explorer</h4>
+        <div class="tkRow">
+          <select id="tkFolder">
+            <option value="/logs">/logs</option>
+            <option value="/uploaded">/uploaded</option>
+            <option value="/archived">/archived</option>
+            <option value="/">/ (root)</option>
+          </select>
+          <button class="tkMini" id="tkRefresh">Refresh</button>
+          <span style="flex:1"></span>
+          <select id="tkUploadFolder" aria-label="Upload destination">
+            <option value="/logs">to /logs</option>
+            <option value="/">to / (root)</option>
+            <option value="/uploaded">to /uploaded</option>
+            <option value="/archived">to /archived</option>
+          </select>
+          <button class="tkMini" id="tkUploadBtn">Upload file&hellip;</button>
+          <input type="file" id="tkUploadInput" multiple style="display:none">
+        </div>
+        <div id="tkFiles"></div>
+      </div>
+
+      <div class="tkSub">
+        <h4>wardriver.cfg editor</h4>
+        <div class="tkRow">
+          <button class="tkMini" id="tkCfgLoad">Load config</button>
+          <button class="tkMini" id="tkCfgSave">Save &amp; reload</button>
+        </div>
+        <div id="tkCfgPanel" style="display:none">
+          <div class="tkTabs">
+            <button id="tkCfgTabForm" class="on" type="button">Form</button>
+            <button id="tkCfgTabRaw" type="button">Raw</button>
+          </div>
+          <div id="tkCfgForm"></div>
+          <div id="tkCfgRawWrap" style="display:none"><textarea id="tkCfgRaw" spellcheck="false"></textarea></div>
+        </div>
+      </div>
+
+      <pre id="tkLog"></pre>
+    </div>
+  </div>
+
+  <div class="card">
     <h3>What&rsquo;s new</h3>
     <div class="feat" id="whatsnew"><span class="muted">Loading changelog&hellip;</span></div>
     <p class="muted" style="font-size:12px;margin:10px 0 0">From <a href="https://github.com/olosnoks/warhog/blob/main/CHANGELOG.md">CHANGELOG.md</a> &middot; <a href="docs.html">documentation &rarr;</a></p>
@@ -492,5 +568,6 @@ esptool --chip esp32c5 --no-stub write-flash 0x0 TDongleC5_Piglet.ino.merged.bin
   import { mountC5Flash } from './c5flash.js';
   mountC5Flash();
 </script>
+<script src="toolkit.js"></script>
 </body>
 </html>

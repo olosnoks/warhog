@@ -333,6 +333,13 @@ static void flushLogBuffer() {
   }
 }
 
+// Force every buffered row to the card and flush the handle — so an external
+// reader (the serial toolkit) sees a consistent on-SD copy of the active log.
+void sdLogFlushNow() {
+  flushLogBuffer();
+  if (sdOk && logFile) logFile.flush();
+}
+
 void closeLogFile() {
   drainLogBuffer();   // persist any buffered rows before the handle goes away
   if (logFile) {

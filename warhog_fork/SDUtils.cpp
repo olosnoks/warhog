@@ -285,6 +285,13 @@ static void flushLogBuffer() {
   }
 }
 
+// Force every buffered row to the card and flush the handle — so an external
+// reader (the serial toolkit) sees a consistent on-SD copy of the active log.
+void sdLogFlushNow() {
+  flushLogBuffer();
+  if (sdOk && logFile) logFile.flush();
+}
+
 // Append one already-formatted row (without trailing newline) to the batch,
 // writing the whole batch to SD once it fills.
 static void bufferLogLine(const char* line, size_t len) {

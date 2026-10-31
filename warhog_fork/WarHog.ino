@@ -29,6 +29,7 @@
 #include "Config.h"
 #include "GPS.h"
 #include "SDUtils.h"
+#include "SerialTool.h"
 #include "Display.h"
 #include "WiFiManager.h"
 #include "Scanner.h"
@@ -624,6 +625,21 @@ void loop() {
   // Web server
   server.handleClient();
 
+  // USB serial toolkit ("WT" protocol) — SD file explorer + wardriver.cfg editor.
+  {
+    static char     toolLine[640];
+    static uint16_t toolLen = 0;
+    while (Serial.available()) {
+      char c = Serial.read();
+      if (c == '\n' || c == '\r') {
+        if (toolLen > 0) { toolLine[toolLen] = 0; serialToolHandleLine(toolLine); toolLen = 0; }
+      } else if (toolLen < (uint16_t)(sizeof(toolLine) - 1)) {
+        toolLine[toolLen++] = c;
+      } else toolLen = 0;
+    }
+  }
+  serialToolTick();
+
   // Track AP client presence and enforce AP window. The window does NOT
   // auto-extend on connect; the user must click "Stay" in the WebUI prompt
   // to push it out to the 5 min budget.
@@ -814,6 +830,7 @@ void loop() {
       // Pages 1 (networks), 2 (nav), 4 (pig): respect AP/STA pause
       allowScan = scanningEnabled && !apActive && (userScanOverride || !autoPaused);
     }
+    if (serialToolActive()) allowScan = false;  // a USB toolkit session owns the SD bus
     allowScanForOled = allowScan;
 
     if (allowScan) {

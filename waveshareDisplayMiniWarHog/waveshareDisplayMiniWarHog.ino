@@ -2257,7 +2257,54 @@ Serial.print("[SD] sdOk(after TFT)="); Serial.println(sdOk ? "true" : "false");
   Serial.println("=== Boot complete ===");
 }
 
+// ============ Piglet Toolkit "WT" serial protocol (SD explorer + wardriver.cfg) ============
+// SD and the TFT share the SPI bus, so every SD access raises tft_cs first (tkSel()).
+static bool     tkActive = false;
+static uint32_t tkLastMs = 0;
+static const uint32_t TK_TIMEOUT_MS = 30000;
+static File     tkPf;
+static bool     tkPutting = false, tkPutCfg = false;
+static uint32_t tkRemain = 0, tkWantCrc = 0, tkAcc = 0xFFFFFFFFu;
+static char     tkPath[160] = {0};
+static const char* TK_CFG = "/wardriver.cfg";
+static const char* TK_CFG_TMP = "/wardriver.cfg.tmp";
+static inline void tkSel() { digitalWrite(PINS.tft_cs, HIGH); }
+static uint32_t tkCrc(uint32_t crc, const uint8_t* d, size_t n){ for(size_t i=0;i<n;i++){crc^=d[i];for(int k=0;k<8;k++)crc=(crc>>1)^(0xEDB88320u&(0u-(crc&1u)));} return crc; }
+static const char TKB64[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static size_t tkEnc(const uint8_t* in,size_t n,char* out){ size_t o=0,i=0; while(i+3<=n){uint32_t v=((uint32_t)in[i]<<16)|((uint32_t)in[i+1]<<8)|in[i+2];out[o++]=TKB64[(v>>18)&63];out[o++]=TKB64[(v>>12)&63];out[o++]=TKB64[(v>>6)&63];out[o++]=TKB64[v&63];i+=3;} size_t r=n-i; if(r==1){uint32_t v=(uint32_t)in[i]<<16;out[o++]=TKB64[(v>>18)&63];out[o++]=TKB64[(v>>12)&63];out[o++]='=';out[o++]='=';}else if(r==2){uint32_t v=((uint32_t)in[i]<<16)|((uint32_t)in[i+1]<<8);out[o++]=TKB64[(v>>18)&63];out[o++]=TKB64[(v>>12)&63];out[o++]=TKB64[(v>>6)&63];out[o++]='=';} out[o]=0; return o; }
+static int tkVal(char c){ if(c>='A'&&c<='Z')return c-'A'; if(c>='a'&&c<='z')return c-'a'+26; if(c>='0'&&c<='9')return c-'0'+52; if(c=='+')return 62; if(c=='/')return 63; return -1; }
+static size_t tkDec(const char* in,uint8_t* out){ size_t o=0; int q[4],qn=0; for(const char* p=in;*p;++p){ if(*p=='=')continue; int v=tkVal(*p); if(v<0)continue; q[qn++]=v; if(qn==4){out[o++]=(q[0]<<2)|(q[1]>>4);out[o++]=((q[1]&15)<<4)|(q[2]>>2);out[o++]=((q[2]&3)<<6)|q[3];qn=0;} } if(qn>=2){out[o++]=(q[0]<<2)|(q[1]>>4); if(qn>=3)out[o++]=((q[1]&15)<<4)|(q[2]>>2);} return o; }
+static void tkFlush(){ flushLogBuffer(); if(sdOk&&logFile){ tkSel(); logFile.flush(); } }
+static void tkPutCleanup(bool rm){ if(tkPf){ tkSel(); tkPf.close(); } if(rm){ const char* p=tkPutCfg?TK_CFG_TMP:tkPath; tkSel(); if(p[0]&&SD.exists(p))SD.remove(p);} tkPutting=false; }
+static void tkStartPut(const char* path,uint32_t size,uint32_t crc,bool isCfg){ if(!sdOk){Serial.println("WT ERR nosd");return;} if(tkPutting)tkPutCleanup(true); const char* w=isCfg?TK_CFG_TMP:path; strlcpy(tkPath,path,sizeof(tkPath)); tkSel(); if(SD.exists(w))SD.remove(w); tkPf=SD.open(w,FILE_WRITE); if(!tkPf){Serial.println("WT ERR open");return;} tkPutting=true;tkPutCfg=isCfg;tkRemain=size;tkWantCrc=crc;tkAcc=0xFFFFFFFFu; Serial.println("WT READY"); }
+static void tkPutData(const char* b64){ if(!tkPutting)return; static uint8_t buf[600]; size_t n=tkDec(b64,buf); if(n>tkRemain)n=tkRemain; tkSel(); size_t w=tkPf.write(buf,n); tkAcc=tkCrc(tkAcc,buf,n); if(w!=n){tkPutCleanup(true);Serial.println("WT ERR write");return;} tkRemain-=n; if(tkRemain==0){ tkSel(); tkPf.flush(); tkPf.close(); uint32_t got=tkAcc^0xFFFFFFFFu; if(got!=tkWantCrc){ const char* p=tkPutCfg?TK_CFG_TMP:tkPath; tkSel(); if(SD.exists(p))SD.remove(p); tkPutting=false; Serial.printf("WT ERR crc want=%08lX got=%08lX\n",(unsigned long)tkWantCrc,(unsigned long)got); return;} if(tkPutCfg){ tkSel(); if(SD.exists(TK_CFG))SD.remove(TK_CFG); bool ok=SD.rename(TK_CFG_TMP,TK_CFG); tkPutting=false; if(!ok){Serial.println("WT ERR rename");return;} loadConfigFromSD(); Serial.println("WT OK cfg"); return;} tkPutting=false; Serial.println("WT OK"); } }
+static void tkGet(const char* path){ if(!sdOk){Serial.println("WT ERR nosd");return;} tkFlush(); tkSel(); File f=SD.open(path,FILE_READ); if(!f||f.isDirectory()){ if(f)f.close(); Serial.println("WT ERR open"); return;} Serial.printf("WT BEGIN %lu\n",(unsigned long)f.size()); uint8_t raw[384]; char b[520]; uint32_t acc=0xFFFFFFFFu; while(true){ tkSel(); int n=f.read(raw,sizeof(raw)); if(n<=0)break; acc=tkCrc(acc,raw,n); tkEnc(raw,n,b); Serial.print("WT DATA "); Serial.println(b); yield(); } tkSel(); f.close(); Serial.printf("WT END %08lX\n",(unsigned long)(acc^0xFFFFFFFFu)); }
+static void tkLs(const char* dir){ if(!sdOk){Serial.println("WT ERR nosd");return;} if(!*dir)dir="/"; tkSel(); File root=SD.open(dir); if(!root||!root.isDirectory()){ if(root)root.close(); Serial.println("WT ERR nodir"); return;} while(true){ tkSel(); File f=root.openNextFile(); if(!f)break; String p=normalizeSdPath(dir,f.name()); bool d=f.isDirectory(); uint32_t sz=d?0:(uint32_t)f.size(); f.close(); if(d)Serial.printf("WT DIR %s\n",p.c_str()); else Serial.printf("WT F %lu %s\n",(unsigned long)sz,p.c_str()); yield(); } tkSel(); root.close(); Serial.println("WT END"); }
+static void tkRm(const char* path){ if(!sdOk){Serial.println("WT ERR nosd");return;} if(!*path){Serial.println("WT ERR nopath");return;} tkSel(); bool ok=SD.remove(path); Serial.println(ok?"WT OK":"WT ERR rm"); }
+static void tkPutFile(const char* args){ char path[160]; int i=0; while(args[i]&&args[i]!=' '&&i<159){path[i]=args[i];i++;} path[i]=0; const char* p=args+i; while(*p==' ')p++; uint32_t size=strtoul(p,(char**)&p,10); while(*p==' ')p++; uint32_t crc=strtoul(p,nullptr,16); if(!path[0]){Serial.println("WT ERR nopath");return;} tkStartPut(path,size,crc,false); }
+static bool serialToolActive(){ return tkActive; }
+static bool serialToolHandleLine(const char* line){
+  if(!(line[0]=='W'&&line[1]=='T'))return false; if(!(line[2]==' '||line[2]=='\0'))return false; tkLastMs=millis();
+  const char* rest=line+2; while(*rest==' ')rest++; char verb[12]; int vi=0; while(rest[vi]&&rest[vi]!=' '&&vi<11){verb[vi]=rest[vi];vi++;} verb[vi]=0; const char* args=rest+vi; while(*args==' ')args++;
+  if(tkPutting){ if(!strcmp(verb,"DATA")){tkPutData(args);return true;} if(!strcmp(verb,"ABORT")){tkPutCleanup(true);Serial.println("WT OK abort");return true;} tkPutCleanup(true); }
+  if(!strcmp(verb,"HELLO")){ tkActive=true; Serial.println("WT HELLO fw=1.0 model=waveshare-c6 proto=1"); }
+  else if(!strcmp(verb,"LS")) tkLs(args);
+  else if(!strcmp(verb,"GET")) tkGet(args);
+  else if(!strcmp(verb,"PUT")) tkPutFile(args);
+  else if(!strcmp(verb,"RM")) tkRm(args);
+  else if(!strcmp(verb,"CFG")){ char sub[8]; int si=0; while(args[si]&&args[si]!=' '&&si<7){sub[si]=args[si];si++;} sub[si]=0; const char* sa=args+si; while(*sa==' ')sa++; if(!strcmp(sub,"GET")) tkGet(TK_CFG); else if(!strcmp(sub,"PUT")){ uint32_t size=strtoul(sa,(char**)&sa,10); while(*sa==' ')sa++; uint32_t crc=strtoul(sa,nullptr,16); tkStartPut(TK_CFG,size,crc,true);} else Serial.println("WT ERR cfgsub"); }
+  else if(!strcmp(verb,"BYE")){ if(tkPutting)tkPutCleanup(true); tkActive=false; Serial.println("WT BYE"); }
+  else if(verb[0]==0) Serial.println("WT PONG");
+  else Serial.printf("WT ERR unknown %s\n",verb);
+  return true;
+}
+static void serialToolTick(){ if(!tkActive)return; if(millis()-tkLastMs>TK_TIMEOUT_MS){ if(tkPutting)tkPutCleanup(true); tkActive=false; Serial.println("WT TIMEOUT"); } }
+static void serialToolPoll(){ static char L[640]; static uint16_t n=0; while(Serial.available()){ char c=Serial.read(); if(c=='\n'||c=='\r'){ if(n>0){L[n]=0; serialToolHandleLine(L); n=0;} } else if(n<(uint16_t)(sizeof(L)-1)) L[n++]=c; else n=0; } }
+// ============ end Piglet Toolkit ============
+
 void loop() {
+  serialToolPoll();
+  serialToolTick();
   server.handleClient();
 
   sdLogBufferTick();   // time-based safety flush for the batched CSV writer
@@ -2335,7 +2382,7 @@ uiGpsSats = gps.satellites.isValid() ? gps.satellites.value() : 0;
   wifi_mode_t m = WiFi.getMode();
   bool apActive = (m == WIFI_AP || m == WIFI_AP_STA);
 
-  bool allowScan = scanningEnabled && sdOk && !apActive && (userScanOverride || !autoPaused);
+  bool allowScan = scanningEnabled && sdOk && !apActive && !serialToolActive() && (userScanOverride || !autoPaused);
   if (allowScan) doScanOnce();
 
   delay(10);

@@ -20,6 +20,7 @@
 #include "Config.h"
 #include "GPS.h"
 #include "SDUtils.h"
+#include "SerialTool.h"
 #include "Display.h"
 #include "WiFiManager.h"
 #include "Scanner.h"
@@ -276,9 +277,9 @@ void setup() {
   Serial.println("=== Boot complete ===");
 }
 
-static void processSerialCommands() {
-  while (Serial.available()) {
-    const char c = Serial.read();
+// Handle a legacy single-character debug command (v/u/b/c/o).
+static void handleCharCommand(char c) {
+  {
     if (c == 'v' || c == 'V') {
       Serial.printf("[CMD] FW %s  heap=%u  battPin=%d  battAvail=%d  battV=%.2f  raw_mV=%d\n",
                     FIRMWARE_VERSION, ESP.getFreeHeap(), cfg.battPin,
@@ -307,6 +308,28 @@ static void processSerialCommands() {
       Serial.printf("[CMD] radio idle=%d wifiMode=%d heap=%u\n",
                     (int)radioIdle, (int)WiFi.getMode(), ESP.getFreeHeap());
     }
+  }
+}
+
+// Read serial: a bare legacy command char (v/u/b/c/o) is handled immediately;
+// everything else is accumulated into a line and, on newline, dispatched to the
+// "WT" toolkit protocol (SerialTool). Non-WT lines are ignored there.
+static void processSerialCommands() {
+  static char     lineBuf[640];
+  static uint16_t lineLen = 0;
+  while (Serial.available()) {
+    const char c = Serial.read();
+    if (lineLen == 0 && (c=='v'||c=='V'||c=='u'||c=='U'||c=='b'||c=='B'||
+                         c=='c'||c=='C'||c=='o'||c=='O')) {
+      handleCharCommand(c);
+      continue;
+    }
+    if (c == '\n' || c == '\r') {
+      if (lineLen > 0) { lineBuf[lineLen] = 0; serialToolHandleLine(lineBuf); lineLen = 0; }
+      continue;
+    }
+    if (lineLen < (uint16_t)(sizeof(lineBuf) - 1)) lineBuf[lineLen++] = c;
+    else lineLen = 0;  // overflow — drop the line
   }
 }
 
@@ -364,6 +387,7 @@ void loop() {
                            sdOk &&
                            !statusPagePaused &&
                            !apActive &&
+                           !serialToolActive() &&  // a USB toolkit session owns the SD bus
                            !meshCoreActive &&   // Core only logs node records — never scans APs itself
                            !meshNodeActive &&   // Node scans via nodeModeTick(), not the solo scanner
                            (userScanOverride || !autoPaused);
@@ -376,6 +400,7 @@ void loop() {
   }
 
   sdLogBufferTick();   // time-based safety flush for the batched CSV writer
+  serialToolTick();    // USB toolkit session inactivity timeout
   batteryTestTick();
   batteryMonitorTick();
   bleScannerTick();
