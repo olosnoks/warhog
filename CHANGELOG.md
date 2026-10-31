@@ -7,6 +7,8 @@ the base firmware history.
 
 ## Unreleased
 
+## v0.1.29 — 2026-10-31
+
 ### Repo line-ending policy (LF)
 - **Added a `.gitattributes` LF policy for the whole tree.** Local working
   copies carried a mix of CRLF/LF (which made cross-project diffs show as 100%
