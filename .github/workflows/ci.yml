@@ -1,0 +1,66 @@
+name: CI (pre-merge build + tests)
+
+# Pre-merge gate: runs on every PR and on pushes to main. Compiles the scheduler
+# host test suite (no ESP32 toolchain needed) and builds every PlatformIO board
+# env so a broken build or a scheduler-logic regression is caught BEFORE merge.
+# This does NOT deploy — build-and-deploy.yml still owns releases (v* tags) and
+# the GitHub Pages flasher.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to the same ref supersedes an in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scheduler-tests:
+    name: Scheduler host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Drop-in header drift guard (T-Dongle sketch vs scheduler/)
+        run: bash scripts/check-dropins.sh
+      - name: Run scheduler unit + ON-path + replay suite
+        run: bash scheduler/tests/run.sh
+
+  build:
+    name: Build ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { env: xiao_c5,                  dir: "warhog_fork" }
+          - { env: freenove-s3-cyd-ham-ui4,  dir: "WarHog_Freenove_S3_CYD_HAM_UI4" }
+          - { env: guition-jc8048w550,       dir: "WarHog_Freenove_S3_CYD_HAM_UI4" }
+          - { env: esp32c3_oled,             dir: "c3_node" }
+          - { env: warhognode_c5,            dir: "WarHogNode" }
+          - { env: waveshare_c6,             dir: "waveshareDisplayMiniWarHog" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ matrix.env }}-${{ hashFiles('**/platformio.ini') }}
+          restore-keys: pio-${{ matrix.env }}-
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+
+      - name: Build
+        run: pio run -d "${{ matrix.dir }}" -e "${{ matrix.env }}"
