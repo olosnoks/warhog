@@ -16,9 +16,7 @@ bool   appendWigleRow(const String& mac, const String& ssid, const String& auth,
                       const String& firstSeen, int channel, int rssi,
                       double lat, double lon, double altM, double accM);
 
-String normalizeSdPath(const char* dir, const char* nameIn);
-String pathBasename(const String& p);
-bool   isAllowedDataPath(const String& p);
+#include "sd_paths.h"   // pathBasename, normalizeSdPath, isAllowedDataPath, sanitiseDeviceName (common/)
 bool   moveToUploaded(const String& srcPath);
 // Move a file into /archived instead of deleting it. Used by the empty-CSV
 // auto-cleanup so the device never silently removes a file.

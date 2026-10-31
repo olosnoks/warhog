@@ -2,55 +2,8 @@
 #include "Globals.h"
 #include "esp_heap_caps.h"   // heap_caps_malloc — batch buffer in PSRAM when present
 
-// ---- Path helpers ----
-
-String pathBasename(const String& p) {
-  int slash = p.lastIndexOf('/');
-  if (slash < 0) return p;
-  return p.substring(slash + 1);
-}
-
-String normalizeSdPath(const char* dir, const char* nameIn) {
-  if (!dir || !nameIn) return "";
-
-  String d(dir);
-  String n(nameIn);
-
-  d.trim();
-  n.trim();
-
-  if (d.length() == 0 || n.length() == 0) return "";
-
-  // Ensure dir starts with "/"
-  if (d[0] != '/') d = "/" + d;
-
-  // Strip trailing "/" from dir
-  while (d.endsWith("/")) d.remove(d.length() - 1);
-
-  // Case A: name is already absolute: "/logs/foo.csv" or "/uploaded/foo.csv"
-  if (n[0] == '/') {
-    // If SD lib already gives full path, just return it
-    return n;
-  }
-
-  // Case B: name is "logs/foo.csv" (no leading slash)
-  // If it starts with the same directory name, convert to absolute.
-  // Example: dir="/logs", name="logs/foo.csv" => "/logs/foo.csv"
-  String dNoSlash = d;
-  if (dNoSlash.startsWith("/")) dNoSlash = dNoSlash.substring(1); // "logs"
-
-  if (n.startsWith(dNoSlash + "/")) {
-    return "/" + n;  // make it absolute
-  }
-
-  // Case C: name is just "foo.csv"
-  // Join dir + "/" + name
-  return d + "/" + n;
-}
-
-bool isAllowedDataPath(const String& p) {
-  return p.startsWith("/logs/") || p.startsWith("/uploaded/");
-}
+// Path/name helpers (pathBasename, normalizeSdPath, isAllowedDataPath,
+// sanitiseDeviceName) now live in common/sd_paths.h, included via SDUtils.h.
 
 // ---- SD clock negotiation ----
 // Tries a descending list of SPI clock speeds (fastest first, capped by
@@ -342,16 +295,6 @@ void sdLogBufferTick() {
 // Sanitise a user-provided device name for safe use in filenames.
 // Keeps alphanumerics, hyphens, underscores; replaces spaces with _;
 // strips everything else; truncates to 20 chars.
-static String sanitiseDeviceName(const String& raw) {
-  String s = raw;
-  s.replace(" ", "_");
-  for (int i = (int)s.length() - 1; i >= 0; i--) {
-    char c = s[i];
-    if (!isAlphaNumeric(c) && c != '_' && c != '-') s.remove(i, 1);
-  }
-  if (s.length() > 20) s = s.substring(0, 20);
-  return s;
-}
 
 static String newCsvFilename() {
   if (!SD.exists("/logs")) SD.mkdir("/logs");

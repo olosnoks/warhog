@@ -20,7 +20,10 @@ a `…Tick()` called every `loop()`.
 - `bool appendWigleRow(mac, ssid, auth, ts, ch, rssi, lat, lon, alt, acc)` — one Wi-Fi row.
 - `void appendWigleBleRow(mac, name, rssi, …)` — one BLE row.
 - `String normalizeSdPath(dir, name)`, `String pathBasename(p)`, `bool isAllowedDataPath(p)`,
-  `bool moveToUploaded(srcPath)` — path hygiene + post-upload archival.
+  `bool moveToUploaded(srcPath)` — path hygiene + post-upload archival. The pure path/name
+  helpers (`normalizeSdPath`, `pathBasename`, `isAllowedDataPath`, `sanitiseDeviceName`) live
+  once in `common/sd_paths.h` (shared via `-I../common`, like `scheduler/`), so the Core and
+  CYD SDUtils no longer keep divergent copies.
 
 ### `SessionStats` — counters and history
 - `statsRecordWifiAuth(mode)` — tally per auth type for the stats screen.

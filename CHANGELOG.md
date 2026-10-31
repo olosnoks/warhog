@@ -7,6 +7,17 @@ the base firmware history.
 
 ## Unreleased
 
+### Share the SD path helpers via `common/` (end a divergence)
+- **Extracted the byte-identical SD path/name helpers into `common/sd_paths.h`.**
+  `pathBasename`, `normalizeSdPath`, `isAllowedDataPath` and `sanitiseDeviceName`
+  were duplicated verbatim in the Core (`warhog_fork`) and CYD SDUtils; a fix in
+  one had to be hand-ported. They now live once in `common/sd_paths.h` (pure
+  `String` logic, no board deps), consumed via a new `-I../common` include path
+  on both projects, like `scheduler/`. `SDUtils.h` includes it, so every caller
+  is unaffected. The genuinely board-specific SD cores (SPI vs SD_MMC recovery,
+  `SdReader`, the logging path) correctly stay per-project. No behavior change;
+  all three affected envs (`xiao_c5`, `freenove`, `guition`) build green.
+
 ### CI: gate the legacy (flags-OFF) firmware path
 - **Added a `legacy-off-build` CI job.** Released builds ship every `PIG_FEAT_*`
   scheduler flag ON, and the invariant is that the OFF path stays byte-identical
