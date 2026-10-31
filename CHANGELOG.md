@@ -7,6 +7,22 @@ the base firmware history.
 
 ## Unreleased
 
+### Pre-merge CI gate + drop-in header drift guard
+- **CI now runs before merge, not just on deploy.** A new workflow
+  (`.github/workflows/ci.yml`) runs on every pull request and push to `main`:
+  it builds all six PlatformIO board envs and runs the scheduler host test
+  suite, so a broken build or a scheduler-logic regression is caught before it
+  reaches `main`. It does not deploy — `build-and-deploy.yml` still owns
+  releases (`v*` tags) and the GitHub Pages flasher.
+- **Drop-in header drift guard.** `scripts/check-dropins.sh` (run in CI) asserts
+  that the T-Dongle Arduino sketch's local copies of `pig_proto.h`,
+  `pig_dedup.h`, `bssid_cache.h` and `pig_dwell.h` stay byte-identical to the
+  canonical `scheduler/` sources. The Arduino IDE has no include path, so those
+  copies exist by necessity; the guard replaces the old "review by hand" process
+  so a stale protocol can't ship to one board unnoticed.
+- `.gitattributes` pins `*.sh` to LF so a Windows edit can't CRLF-break the CI
+  scripts' shebang line.
+
 ### SD reads fixed + ~94 KB internal RAM freed (S3 CYD / W550)
 - **Fixed garbled SD reads.** Arduino `File::read()` goes through a 4 KB stdio
   buffer that ended up in PSRAM when internal RAM was low. The SD driver then

@@ -26,18 +26,28 @@ pio run -d <dir> -e <env>                                  # ON (release default
 PLATFORMIO_BUILD_FLAGS="-U<FLAG>" pio run -d <dir> -e <env>  # OFF path still compiles
 ```
 The **OFF path must stay byte-identical** to legacy — new feature code goes behind its
-`#if PIG_FEAT_*`. CI builds all six envs on deploy; the deploy is gated on the build, so a
-broken env can't overwrite the live flasher.
+`#if PIG_FEAT_*`.
+
+## CI (`.github/workflows/ci.yml`)
+CI runs on **every pull request and push to `main`** (plus manual dispatch) and does not
+deploy. It builds all six PlatformIO board envs, runs the scheduler host suite, and runs
+the drop-in drift guard (below) — so a broken build or a scheduler regression is caught
+before it reaches `main`. Releases and the GitHub Pages flasher stay with
+`build-and-deploy.yml` (`v*` tags), where the deploy is gated on the build so a broken env
+can't overwrite the live flasher.
 
 ## Keeping the C5 header copies in sync
 The Arduino sketch `TDongleC5_WarHog/` has no include path, so it keeps **byte-identical
-copies** of `pig_proto.h`, `pig_dedup.h`, and `pig_dwell.h`. After editing a scheduler
-header:
+copies** of `pig_proto.h`, `pig_dedup.h`, `bssid_cache.h`, and `pig_dwell.h`. After editing
+a scheduler header, re-sync the copy:
 ```bash
-cp scheduler/pig_dwell.h TDongleC5_WarHog/pig_dwell.h   # (and proto/dedup as needed)
-diff -q scheduler/pig_dwell.h TDongleC5_WarHog/pig_dwell.h   # must be identical
+cp scheduler/pig_dwell.h TDongleC5_WarHog/pig_dwell.h   # (and proto/dedup/bssid_cache as needed)
 ```
-TDongle is **not** in CI, so those copies get no build gate — review them by hand.
+These copies are **gated in CI** by `scripts/check-dropins.sh`, which fails the build if any
+copy drifts from its `scheduler/` source. Run it locally before pushing:
+```bash
+bash scripts/check-dropins.sh
+```
 
 ## Gotchas worth knowing
 - **Arduino build artifact:** before committing `warhog_fork`, remove
