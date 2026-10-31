@@ -47,8 +47,8 @@ All default to `0` (legacy behavior) in the headers; the per-board
 ./scheduler/tests/run.sh
 ```
 
-Compiles the headers against a tiny `tests/stubs/Arduino.h` shim and runs two
-translation units (**156 checks** total):
+Compiles the headers against a tiny `tests/stubs/Arduino.h` shim and runs three
+translation units (**175 checks** total):
 
 - `tests/test_all.cpp` (**123**) — every module with the `PIG_FEAT_*` flags at
   their OFF defaults: classification transitions, drop policy,
@@ -59,6 +59,9 @@ translation units (**156 checks** total):
   compile-time `#if`, so the ON path (passive revisit pass, dwell scaling, DFS
   invariant, and the `pig_sweep_build`/`_invalidate` cycle driver) needs its own
   TU; `test_all.cpp` can only assert the legacy fall-through.
+- `tests/test_pair_on.cpp` (**19**) — the Phase 5 WarHog dual-node pair scheduler
+  compiled with `PIG_FEAT_PAIR_SCHED=1`: complementary A/B role lists, per-channel
+  dwell table, and single-pass (no yield-revisit) sweep.
 
 Logic only — not on-target FreeRTOS timing or radio behavior. Clean under `g++`
 and `clang++` at `-O2`.

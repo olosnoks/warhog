@@ -1,11 +1,19 @@
 # Phase 4 — FreeRTOS core isolation (implementation plan, bench-gated)
 
-**Status:** groundwork only. The queue handoff types (`pig_queues.h`) and the drop
-policy (`lossy_ring.h`) are host-tested. The task architecture below is **not wired
-into any firmware** and must not be enabled blind — it is a threading rewrite whose
-correctness is only knowable by load-testing a multi-node mesh, and on the CYD the SD
-and TFT share the SPI bus (see §Hazards). Do this on a bench, one task at a time,
-behind `PIG_FEAT_CORE_ISO`, with each step validated before the next.
+**Status (updated 2026-10-31):** SHIPPED. Steps 1 (SD store on a core-0 task) and 5
+(RX-drain on a second core-0 task) are implemented behind `PIG_FEAT_CORE_ISO` and
+**ship ON** in the CYD builds (`-DPIG_FEAT_CORE_ISO=1` in both env `build_flags`);
+they were bench-validated at 4 nodes (RX jitter 2–3 ms, 0 drops). Steps 2–4 (separate
+UI/GNSS/upload tasks) turned out **unnecessary** — Steps 1+5 already decouple the RT
+path. What remains is ≥12-node scale confirmation (the user's real ceiling; see the
+Adaptive-Scheduler wiki). The plan below is kept as the design record and the hazards
+reference. Note: on the two current CYD build envs SD and TFT are **not** on one SPI
+bus (freenove = SDIO SD, guition = RGB TFT), so the `SpiBusLock` mutex is defensive
+prep for the shared-bus ILI9341 variant it was written for.
+
+The original gating guidance still holds for any further task split: it is a threading
+rewrite whose correctness is only knowable by load-testing a multi-node mesh; do it on
+a bench, one task at a time, behind `PIG_FEAT_CORE_ISO`, each step validated first.
 
 ## Goal
 Keep the RT path (ESP-NOW RX, scheduling, worker scan FSM) deadline-bound on core 0

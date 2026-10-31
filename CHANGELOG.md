@@ -7,6 +7,14 @@ the base firmware history.
 
 ## Unreleased
 
+### Docs sync
+- Brought the documentation up to date with the current code: added `scheduler/`
+  and `common/` to the README directory map, corrected the host-test count
+  (156 → **175**, now 3 TUs incl. `test_pair_on`) in the README and the
+  scheduler README/CLAUDE, and updated `scheduler/PHASE4_PLAN.md` from
+  "groundwork only / not wired" to its real state (Steps 1+5 shipped and ON in
+  the CYD builds, Steps 2–4 unnecessary).
+
 ## v0.1.29 — 2026-10-31
 
 ### Repo line-ending policy (LF)

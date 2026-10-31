@@ -48,7 +48,7 @@ one is born needing a build.
 
 ## Build / test
 ```bash
-# Host unit tests — 156 checks, 2 TUs + the replay smoke test.
+# Host unit tests — 175 checks, 3 TUs + the replay smoke test.
 ./scheduler/tests/run.sh
 # No host g++ on Windows; run it under WSL:
 wsl bash -c "cd /mnt/c/Users/skons/Desktop/warhog/scheduler/tests && bash run.sh"

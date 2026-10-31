@@ -19,7 +19,7 @@ This repository builds upon upstream [Hamspiced/piglet](https://github.com/Hamsp
 | **Offensive & Security Tools** | None (pure wardriving & discovery) | **ESP32 Marauder Port:** Raw 802.11 frame injection, beacon spam, deauth attacks, deauth detection, PMKID capture with Hashcat 22000 export, WPS vulnerability checks, and raw PCAP logging to SD |
 | **Bluetooth Low Energy (BLE)** | Not supported | **BLE Wardriving & Sniffers:** AirTag/FindMy tracking, Flipper Zero detection, Pwnagotchi detection, and multi-platform BLE advertisement floods (Apple, SwiftPair, Samsung, Fast Pair) |
 | **Mesh Ecosystem Support** | JCMK Wardriver ESP-NOW protocol + Biscuit Pro mesh interop (incl. plain-reply, v2.63) | Same mesh base **+ Biscuit Manager BLE/GATT layer** (`BiscuitCompat.cpp`) and **Core BLE Bridge** (`BLEBridge.cpp`) for forwarding BLE records to companion apps |
-| **Adaptive Mesh Scheduler** | Static even channel-slicing across nodes | **Yield-driven acquisition suite** ([`scheduler/`](scheduler/)): worker BSSID dedup (~29 % airtime saved stationary), a two-pass adaptive sweep (fast active, then yield-weighted passive revisits) with DFS-passive compliance, dynamic yield-weighted channel assignment (`PIG_MSG_ADMIN_EXT`), and dual-core SD-logging isolation. Flag-gated (`PIG_FEAT_*`), host-unit-tested (156 checks), and **on by default** in released builds |
+| **Adaptive Mesh Scheduler** | Static even channel-slicing across nodes | **Yield-driven acquisition suite** ([`scheduler/`](scheduler/)): worker BSSID dedup (~29 % airtime saved stationary), a two-pass adaptive sweep (fast active, then yield-weighted passive revisits) with DFS-passive compliance, dynamic yield-weighted channel assignment (`PIG_MSG_ADMIN_EXT`), and dual-core SD-logging isolation. Flag-gated (`PIG_FEAT_*`), host-unit-tested (175 checks), and **on by default** in released builds |
 | **Over-the-Air Node Updates** | USB flashing only | **OTA over ESP-NOW** (`PIG_MSG_OTA_BEGIN/DATA/ACK`): a CYD/W550 Core streams a node its app image from the SD card with a whole-image SHA-256 check — no USB. Chip-matched (XIAO C5 + ESP32-C3 OLED nodes); the Core picks each node's image automatically. Nodes use a two-app-slot partition (one USB reflash to adopt) |
 | **Visuals & Graphics Engine** | Standard OLED text/icons and static pig screen | **PigWorld Graphics Engine:** 1-bit pixel art animation loop, dynamic multi-node flocking visualization (scaling 1 to 6 pigs concurrently), and 2.4 GHz channel occupancy histograms |
 | **Web Flasher** | Documentation references to IDEs | **Integrated Web Flasher:** Browser-based flashing via WebSerial (ESP Web Tools) with real-time SVG device screen previews |
@@ -55,6 +55,8 @@ warhog/
 ├── WarHogNode/                 # Headless dual-band XIAO C5 mesh worker node
 ├── TDongleC5_WarHog/           # LilyGo T-Dongle C5 USB-A standalone build
 ├── waveshareDisplayMiniWarHog/ # Waveshare ESP32-C6 1.47″ vertical color TFT build
+├── scheduler/                  # Shared adaptive-mesh-scheduler headers + host tests (-I../scheduler)
+├── common/                     # Shared firmware headers (-I../common): SD path helpers
 ├── web-flasher/                # Browser-based WebSerial firmware flasher
 │   └── manifests/              # ESP Web Tools JSON manifests
 ├── Case Files/                 # 3D printable enclosures (STL / STEP)
