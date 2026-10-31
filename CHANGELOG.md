@@ -7,6 +7,16 @@ the base firmware history.
 
 ## Unreleased
 
+### Phase 4 Step 1: guard upload file-moves on the shared SPI bus
+- **Closed a shared-bus gap in the core-isolation lock discipline.** Under
+  `PIG_FEAT_CORE_ISO` the per-record SD write runs on a core-0 task (`tStore`)
+  that already holds the `SpiBusLock.h` recursive mutex, but `moveToFolder()`
+  — the upload-time file move run on core 1 (`WigleUpload`/`WebUI`) — took no
+  lock, so it could collide with `tStore` on a board where SD and TFT share the
+  SPI bus. Added a `SpiBusGuard` RAII scope (auto-unlocks on every return) around
+  the whole move. No-op when `PIG_FEAT_CORE_ISO` is OFF (the default), so the
+  shipped behavior is byte-identical; the ON path builds on both CYD envs.
+
 ### CYD: recover a wedged SD bus (both backends)
 - **SD bus recovery on the Guition W550 and Freenove CYD.** After sustained
   heavy SD I/O the bus can wedge, so file opens fail even though the card is

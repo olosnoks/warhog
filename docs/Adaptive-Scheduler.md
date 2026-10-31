@@ -59,7 +59,9 @@ Acceptance target (DESIGN §13): **0 RX deadline misses, RX jitter < 5 ms, at �
 - **Step 1 — SD isolation:** the per-record WiGLE SD write runs on a FreeRTOS task pinned
   to **core 0** (`tStore`), fed by a 48-deep lossy `xQueue`; the loop keeps draining
   ESP-NOW. On the CYD the SD and TFT share one SPI bus, so `tStore` and the UI's
-  `present()` both take the `SpiBusLock.h` recursive mutex.
+  `present()` both take the `SpiBusLock.h` recursive mutex. Upload-time file moves
+  (`moveToFolder`, run on core 1 via `WigleUpload`/`WebUI`) take the same lock via a
+  `SpiBusGuard` RAII scope, so they can't collide with `tStore`'s SD writes on core 0.
 - **Step 5 — RX-drain isolation:** the `coreTextBuf` drain (parse + SD-enqueue) moves onto
   a second core-0 task (`tRxDrain`); the phone-app mirror + UI telemetry are handed back to
   the loop via a `coreMirrorBuf` SPSC ring so NimBLE/UI state stays single-core.

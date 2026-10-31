@@ -178,6 +178,10 @@ bool isAllowedDataPath(const String& p) {
 // such as "/uploaded" or "/archived" (no trailing slash).
 static bool moveToFolder(const String& srcPath, const char* destDir) {
   if (!sdOk) return false;
+  // Uploads call this from the loop/web context (core 1) while the core-isolated
+  // SD store task writes on core 0; serialize the whole move so the two never
+  // drive the shared SPI bus at once. No-op unless PIG_FEAT_CORE_ISO is ON.
+  SpiBusGuard _spiGuard;
   if (!SD.exists(srcPath)) {
     // A wedged bus can make a present file look missing — remount and recheck
     // once (no-op on the SD_MMC build, so behaviour there is unchanged).

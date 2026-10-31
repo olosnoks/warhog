@@ -25,3 +25,10 @@ static inline void spiBusUnlock() { if (gSpiBusMutex) xSemaphoreGiveRecursive(gS
 static inline void spiBusLock()   {}
 static inline void spiBusUnlock() {}
 #endif
+
+// RAII scope guard — serializes a whole multi-op SD/TFT sequence (e.g. a
+// file move with several SD.exists/rename/remove calls) across one critical
+// section, auto-unlocking on every return path. No-op when PIG_FEAT_CORE_ISO
+// is OFF, so zero behavior change. The mutex is recursive, so nesting a guard
+// inside an already-held lock (e.g. SdReader's per-read lock) is safe.
+struct SpiBusGuard { SpiBusGuard() { spiBusLock(); } ~SpiBusGuard() { spiBusUnlock(); } };
