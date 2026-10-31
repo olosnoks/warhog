@@ -11,14 +11,37 @@ same way regardless of hardware.
 | Board | Driver | Notes |
 |---|---|---|
 | Freenove S3 CYD | TFT_eSPI (ILI9341, SPI) | SPI 10–13; the SD card is on its own SDIO bus |
-| Guition JC8048W550 | LovyanGFX (800×480 RGB) | renders to a RAM sprite, then scale-blits |
+| Guition JC8048W550 | LovyanGFX (800×480 RGB) | 533×320 landscape canvas, blitted ×1.5 to fill the panel |
 | XIAO C5 / WarHogNode C3 | SSD1306 OLED (I²C) | small monochrome |
 | T-Dongle C5 | ST7735 color TFT | + APA102 status LED |
 | Waveshare C6 | ST7789 TFT | 172×320 |
 
 Relevant files: `Gfx.h` (draw abstraction), `LGFX_W550.h` (W550 LovyanGFX config),
-`ViewportSprite.h` (the W550 offscreen sprite + scale-blit), `Display.cpp`, `Touch.cpp`
+`ViewportSprite.h` (the W550 offscreen sprite + viewport emulation), `Display.cpp`, `Touch.cpp`
 (FT6336 cap touch on the CYD, GT911 on the W550 — both I²C, off the SPI bus).
+
+## W550 landscape layout
+The page UI is laid out for a 240×320 portrait column. On the 800×480 W550 the frame is a
+**533×320 landscape canvas** (`CANVAS_W` = 800 / 1.5), and `present()` blits it ×1.5 so it
+fills the panel edge to edge: no letterbox bars, and the same fonts and proportions as the CYD.
+
+- **Left, x 0–239:** the page column, exactly as on the CYD (header, pages, footer tabs).
+  Every page and tap handler runs unchanged.
+- **Right, x 240–532:** `drawSidePanel()`, a live panel drawn natively for landscape and
+  visible on every page (and over the editor, speedo and banners):
+  - header strip: mode, plus GPS UTC time (or uptime with no GPS time);
+  - four tiles: 2.4 GHz / 5 GHz / BLE / speed in solo, nodes / records / sats / speed in Core;
+  - **CLUSTER** roster in Core mode: group, MAC tail, records and channels for all 12
+    nodes (`CORE_MAX_NODES`), with nodes that missed two heartbeats shown in amber;
+    otherwise a **RECENT APS** feed (last 12 distinct BSSIDs, sampled from `screenTelemetry`
+    at draw time and kept in PSRAM);
+  - 2.4 GHz channel activity bars (`screenTelemetry.channelHits`);
+  - position strip (lat/lon, HDOP, SD state, active CSV).
+- The panel is display-only. Touch maps panel → canvas by ÷1.5; a touch that starts on the
+  panel is ignored, and a drag that strays onto it is clamped to the column edge.
+- The splash is centred on the canvas, and the redraw interval is capped at 1 s so the
+  panel stays current even on slow-refresh pages.
+- Everything is under `BOARD_W550`; the Freenove build is unchanged.
 
 ## Screen UI (`ScreenUI.cpp`) — S3 touch frontend
 A page-based touch UI. Key entry points:

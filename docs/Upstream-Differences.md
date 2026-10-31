@@ -85,7 +85,7 @@ fork can always be reduced to upstream's scheduling for comparison. Full detail 
 The two S3 display boards (`WarHog_Freenove_S3_CYD_HAM_UI4/`, built as both the Freenove
 CYD and the Guition W550) and their `ScreenUI` page-based touch frontend are fork-only.
 They add runtime mode switching, cluster views, color themes, and the W550's offscreen
-sprite + scale-blit renderer. Upstream targets small OLED/TFT status displays only.
+landscape canvas (page column + live side panel, blitted ×1.5 to 800×480). Upstream targets small OLED/TFT status displays only.
 
 ### Web flasher + PlatformIO CI
 The browser flasher (`web-flasher/`) and the GitHub Actions matrix that builds every board

@@ -45,6 +45,7 @@ private:
   void drawCard(int x, int y, int w, int h, const char* title);
   void drawMetric(int x, int y, int w, const char* label, const String& value, uint16_t color);
   void drawScrollbar(int contentHeight);
+  void drawSidePanel();   // W550 landscape live panel right of the page column (no-op on CYD)
 
   void drawHome();
   void drawNodes();

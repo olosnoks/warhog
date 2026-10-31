@@ -2,7 +2,7 @@
 
 #include <math.h>
 
-#include "SpiBusLock.h"   // Scheduler Phase 4: present() shares the SD SPI bus with the core-0 log task
+#include "SpiBusLock.h"   // Scheduler Phase 4: present() takes the cross-core SD lock (defensive)
 
 #include "BatteryMonitor.h"
 #include "BleScanner.h"
@@ -15,6 +15,9 @@
 #include "SessionStats.h"
 #include "HamLogo.h"
 #include "BoardPins.h"
+#if defined(BOARD_W550)
+#include "esp_heap_caps.h"   // side-panel recent-AP ring lives in PSRAM
+#endif
 
 #include "Globals.h"
 #include "GPS.h"
@@ -26,8 +29,19 @@
 #include "WigleUpload.h"
 
 namespace {
-constexpr int SCREEN_W = 240;
+constexpr int SCREEN_W = 240;   // width of the page column every page is laid out for
 constexpr int SCREEN_H = 320;
+#if defined(BOARD_W550)
+// Landscape canvas: 800/1.5 wide, so present()'s x1.5 blit fills the whole 800x480
+// panel. The page column stays at x 0..239 (all page code unchanged); the rest is
+// the live side panel (drawSidePanel), laid out natively for landscape.
+constexpr int CANVAS_W = 533;
+constexpr int SIDE_X   = SCREEN_W;
+constexpr int SIDE_W   = CANVAS_W - SIDE_X;   // 293
+constexpr float PANEL_SCALE = 1.5f;
+#else
+constexpr int CANVAS_W = SCREEN_W;
+#endif
 constexpr int HEADER_H = 26;
 constexpr int FOOTER_Y = 286;
 constexpr int FOOTER_H = 34;
@@ -322,11 +336,11 @@ void ScreenUI::begin() {
 #if defined(BOARD_W550)
   frame.setPsram(true);
   tft.setBrightness(255);
-  tft.fillScreen(C_BG);  // paint the side margins once; present() only redraws the center
+  tft.fillScreen(C_BG);
 #else
   frame.setAttribute(PSRAM_ENABLE, true);
 #endif
-  spriteReady = frame.createSprite(SCREEN_W, SCREEN_H) != nullptr;
+  spriteReady = frame.createSprite(CANVAS_W, SCREEN_H) != nullptr;
 
 #if !defined(BOARD_W550)
   touch.begin();  // W550 touch (GT911) is initialized by LovyanGFX in tft.init()
@@ -338,11 +352,11 @@ void ScreenUI::begin() {
 void ScreenUI::present() {
   spiBusLock();   // defensive: no current board shares the TFT and SD bus (see SpiBusLock.h)
 #if defined(BOARD_W550)
-  // The UI renders into a 240x320 portrait sprite. Scale it x1.5 to 360x480 and
-  // center it on the 800x480 landscape panel. Phase 2 (native landscape layout)
-  // can drop this and draw directly at panel resolution.
-  frame.setPivot(SCREEN_W * 0.5f, SCREEN_H * 0.5f);
-  frame.pushRotateZoom(&tft, tft.width() * 0.5f, tft.height() * 0.5f, 0.0f, 1.5f, 1.5f);
+  // The UI renders into a 533x320 landscape canvas (page column + side panel).
+  // Scale it x1.5 to fill the 800x480 panel edge to edge.
+  frame.setPivot(CANVAS_W * 0.5f, SCREEN_H * 0.5f);
+  frame.pushRotateZoom(&tft, tft.width() * 0.5f, tft.height() * 0.5f, 0.0f,
+                       PANEL_SCALE, PANEL_SCALE);
 #else
   frame.pushSprite(0, 0);
 #endif
@@ -355,6 +369,11 @@ void ScreenUI::showSplash() {
     return;
   }
 
+#if defined(BOARD_W550)
+  // Center the 240-wide splash on the landscape canvas (viewport = origin shift + clip).
+  frame.fillSprite(C_BG);
+  frame.setViewport((CANVAS_W - SCREEN_W) / 2, 0, SCREEN_W, SCREEN_H);
+#endif
   const int cx = 120, cy = 116;
   const int Rmax = 116, Rrim = 158;
   const uint32_t DUR = 5000;
@@ -441,6 +460,9 @@ void ScreenUI::showSplash() {
     present();
     delay(24);
   }
+#if defined(BOARD_W550)
+  frame.resetViewport();
+#endif
   frame.setTextDatum(TL_DATUM);
 }
 
@@ -460,6 +482,9 @@ void ScreenUI::update(float speedValue) {
     case Page::Tools: refreshMs = 400; break;
   }
   if (speedoMode) refreshMs = 250;
+#if defined(BOARD_W550)
+  refreshMs = min<uint32_t>(refreshMs, 1000);   // keep the live side panel current on slow pages
+#endif
 
   if (!redraw && millis() - lastDrawMs < refreshMs) return;
   draw();
@@ -470,20 +495,19 @@ void ScreenUI::update(float speedValue) {
 void ScreenUI::handleTouch() {
 #if defined(BOARD_W550)
   // GT911 is driven by LovyanGFX in physical 800x480 panel space. The UI logic
-  // below works in the 240x320 sprite space, so invert the present() transform:
-  // the sprite is drawn centered and scaled x1.5 (360x480) on the panel.
+  // below works in canvas space, so invert the present() x1.5 blit. Only the
+  // page column (x < SCREEN_W) is interactive: a touch that starts on the side
+  // panel is ignored, and a drag that strays onto it is clamped to the column
+  // edge so it isn't mistaken for a release.
   TouchPoint point;
   {
     int32_t px = 0, py = 0;
     if (tft.getTouch(&px, &py)) {
-      constexpr float kScale = 1.5f;
-      const int originX = (tft.width()  - int(SCREEN_W * kScale)) / 2;  // 220
-      const int originY = (tft.height() - int(SCREEN_H * kScale)) / 2;  // 0
-      const int sx = int((px - originX) / kScale);
-      const int sy = int((py - originY) / kScale);
-      if (sx >= 0 && sx < SCREEN_W && sy >= 0 && sy < SCREEN_H) {
+      const int sx = int(px / PANEL_SCALE);
+      const int sy = int(py / PANEL_SCALE);
+      if (sx >= 0 && sy >= 0 && sy < SCREEN_H && (sx < SCREEN_W || touchActive)) {
         point.pressed = true;
-        point.x = sx;
+        point.x = min(sx, SCREEN_W - 1);
         point.y = sy;
       }
     }
@@ -888,6 +912,7 @@ void ScreenUI::handleSystemTap(int16_t x, int16_t contentY) {
           frame.drawString("APPLYING...", 120, 148, 2);
           frame.setTextColor(C_MUTED, C_BG);
           frame.drawString(def.choices[next].value, 120, 172, 2);
+          drawSidePanel();
           present();
           delay(700);
           ESP.restart();
@@ -908,6 +933,7 @@ void ScreenUI::handleSystemTap(int16_t x, int16_t contentY) {
       frame.setTextDatum(MC_DATUM);
       frame.setTextColor(C_TEXT, C_BG);
       frame.drawString("REBOOTING", 120, 160, 2);
+      drawSidePanel();
       present();
       delay(200);
       ESP.restart();
@@ -1130,8 +1156,10 @@ void ScreenUI::draw() {
   frame.fillSprite(C_BG);
   frame.setTextSize(1);
 
-  if (editing) { drawEditor(); present(); return; }
-  if (speedoMode) { drawSpeedo(); present(); return; }
+  // drawSidePanel() is the W550 landscape panel (no-op on the 240x320 CYD). It runs
+  // after each mode's draw because the full-screen modes start with fillSprite().
+  if (editing) { drawEditor(); drawSidePanel(); present(); return; }
+  if (speedoMode) { drawSpeedo(); drawSidePanel(); present(); return; }
 
   drawHeader();
 
@@ -1149,6 +1177,7 @@ void ScreenUI::draw() {
   drawScrollbar(contentHeightForPage());
   frame.resetViewport();
   drawFooter();
+  drawSidePanel();
   present();
 }
 // Scalable pig face centered at (cx,cy) with head radius R.
@@ -1524,6 +1553,206 @@ static void formatNodeChannels(const CoreNodeInfo& nd, char* out, size_t outSize
     o += n;
     i = j + 1;
   }
+}
+
+#if defined(BOARD_W550)
+namespace {
+// Recent-AP feed for the side panel. Sampled from screenTelemetry (the latest AP)
+// at draw time, so the scan path pays nothing; the ring lives in PSRAM, off the
+// internal heap a Core is short of.
+struct RecentAp { char ssid[23]; char bssid[18]; int16_t rssi; uint8_t ch; };
+constexpr int RECENT_N = 12;
+RecentAp* g_recent = nullptr;
+int g_recentHead = 0;    // next slot to write; newest entry is head-1
+int g_recentCount = 0;
+
+void recentSample() {
+  if (!screenTelemetry.bssid[0]) return;
+  if (!g_recent) {
+    g_recent = (RecentAp*)heap_caps_calloc(RECENT_N, sizeof(RecentAp), MALLOC_CAP_SPIRAM);
+    if (!g_recent) return;
+  }
+  for (int i = 0; i < g_recentCount; ++i) {   // the latest AP repeats across draws
+    if (strcmp(g_recent[i].bssid, screenTelemetry.bssid) == 0) {
+      g_recent[i].rssi = screenTelemetry.rssi;
+      return;
+    }
+  }
+  RecentAp& r = g_recent[g_recentHead];
+  strlcpy(r.ssid, screenTelemetry.ssid[0] ? screenTelemetry.ssid : "(hidden)", sizeof(r.ssid));
+  strlcpy(r.bssid, screenTelemetry.bssid, sizeof(r.bssid));
+  r.rssi = screenTelemetry.rssi;
+  r.ch = (uint8_t)screenTelemetry.channel;
+  g_recentHead = (g_recentHead + 1) % RECENT_N;
+  if (g_recentCount < RECENT_N) g_recentCount++;
+}
+
+// Fits a count into a size-2 metric tile (<= 4 chars): 9999, 999k, 9.9M, 99M.
+String compactCount(uint32_t v) {
+  char b[12];
+  if (v < 10000) snprintf(b, sizeof(b), "%lu", (unsigned long)v);
+  else if (v < 1000000) snprintf(b, sizeof(b), "%luk", (unsigned long)(v / 1000));
+  else if (v < 10000000) snprintf(b, sizeof(b), "%.1fM", v / 1000000.0f);
+  else snprintf(b, sizeof(b), "%luM", (unsigned long)(v / 1000000));
+  return String(b);
+}
+}  // namespace
+#endif
+
+// W550 landscape panel: the 293x320 canvas strip right of the page column, shown
+// on every page. Header strip / four metric tiles / cluster roster (Core) or
+// recent APs / 2.4 GHz channel activity / position strip. Display-only: touches
+// there are ignored (see handleTouch).
+void ScreenUI::drawSidePanel() {
+#if defined(BOARD_W550)
+  recentSample();
+  const uint32_t now = millis();
+  frame.setViewport(SIDE_X, 0, SIDE_W, SCREEN_H);
+  frame.fillRect(0, 0, SIDE_W, SCREEN_H, C_BG);
+  frame.setTextSize(1);
+  frame.setTextDatum(TL_DATUM);
+
+  // Header strip, continuous with the page column's header.
+  fillVGrad(frame, 0, 0, SIDE_W, HEADER_H, C_CARD_2, C_INPUT);
+  frame.drawFastHLine(0, HEADER_H - 1, SIDE_W, C_BORDER);
+  frame.setTextColor(C_TEXT, C_INPUT);
+  frame.setCursor(10, 9);
+  frame.print("LIVE");
+  frame.setTextColor(C_MUTED, C_INPUT);
+  frame.setCursor(40, 9);
+  frame.print(radioIdle ? "radio off" : (meshCoreActive ? "core" : (meshNodeActive ? "node" : "solo")));
+  {
+    const uint32_t up = now / 1000;
+    char t[24];
+    if (gps.time.isValid() && gps.time.age() < 5000) {
+      snprintf(t, sizeof(t), "%02d:%02d:%02d UTC", gps.time.hour(), gps.time.minute(), gps.time.second());
+    } else {
+      snprintf(t, sizeof(t), "UP %lu:%02lu:%02lu", (unsigned long)(up / 3600),
+               (unsigned long)(up / 60 % 60), (unsigned long)(up % 60));
+    }
+    frame.setTextDatum(MR_DATUM);
+    frame.setTextColor(C_TEXT, C_INPUT);
+    frame.drawString(t, SIDE_W - 8, 13, 1);
+    frame.setTextDatum(TL_DATUM);
+  }
+
+  // Metric tiles.
+  int y = HEADER_H + 6;
+  {
+    constexpr int TW = 66, TP = 72;
+    const String sats = String(gps.satellites.isValid() ? gps.satellites.value() : 0);
+    if (meshCoreActive) {
+      drawMetric(6 + 0 * TP, y, TW, "NODES", String(coreNodeCount),
+                 coreNodeCount ? C_ACCENT : C_MUTED);
+      drawMetric(6 + 1 * TP, y, TW, "RECORDS", compactCount(coreRecordsRx), C_BLUE);
+      drawMetric(6 + 2 * TP, y, TW, "SATS", sats, gpsHasFix ? C_ACCENT : C_WARN);
+    } else {
+      drawMetric(6 + 0 * TP, y, TW, "2.4 GHZ", compactCount(networksFound2G), C_ACCENT);
+      drawMetric(6 + 1 * TP, y, TW, "5 GHZ", compactCount(networksFound5G), C_BLUE);
+      drawMetric(6 + 2 * TP, y, TW, "BLE",
+                 cfg.bluetoothScan ? compactCount(devicesFoundBle) : String("OFF"),
+                 cfg.bluetoothScan ? rgb565(167, 139, 250) : C_MUTED);
+    }
+    drawMetric(6 + 3 * TP, y, TW, cfg.speedUnits == "mph" ? "MPH" : "KM/H",
+               String(displayedSpeed, displayedSpeed < 99.95f ? 1 : 0), C_TEXT);
+  }
+  y += 55;
+
+  // Roster (Core) or recent-AP feed. 12 rows = CORE_MAX_NODES, the full cluster.
+  constexpr int SP_LIST_H = 138, SP_ROW = 10;
+  if (meshCoreActive) {
+    drawCard(6, y, SIDE_W - 12, SP_LIST_H, "CLUSTER");
+    int row = 0;
+    for (int i = 0; i < CORE_MAX_NODES && row < 12; ++i) {
+      const CoreNodeInfo& nd = coreNodes[i];
+      if (!nd.active) continue;
+      const int ry = y + 18 + row * SP_ROW;
+      const bool stale = now - nd.lastHbMs > 10000;   // missed two heartbeats
+      char ch[40];
+      formatNodeChannels(nd, ch, sizeof(ch));
+      frame.setTextColor(stale ? C_WARN : C_ACCENT, C_CARD);
+      frame.setCursor(13, ry);
+      frame.printf("G%u", (unsigned)nd.group);
+      frame.setTextColor(stale ? C_MUTED : C_TEXT, C_CARD);
+      frame.setCursor(31, ry);
+      frame.printf("%02X:%02X:%02X", nd.mac[3], nd.mac[4], nd.mac[5]);
+      frame.setTextDatum(TR_DATUM);
+      frame.drawString(compactCount(nd.recordsRx), 122, ry, 1);
+      frame.setTextDatum(TL_DATUM);
+      frame.setTextColor(C_MUTED, C_CARD);
+      frame.setCursor(130, ry);
+      frame.print(shortText(String(ch), 25));
+      row++;
+    }
+    if (row == 0) {
+      frame.setTextColor(C_MUTED, C_CARD);
+      frame.setCursor(13, y + 18);
+      frame.printf("Waiting for nodes (admin ch %u)", (unsigned)JCMK_ESPNOW_CH);
+    }
+  } else {
+    drawCard(6, y, SIDE_W - 12, SP_LIST_H, "RECENT APS");
+    for (int k = 0; k < g_recentCount; ++k) {
+      const RecentAp& r = g_recent[(g_recentHead - 1 - k + RECENT_N) % RECENT_N];
+      const int ry = y + 18 + k * SP_ROW;
+      frame.setTextColor(k == 0 ? C_TEXT : C_MUTED, C_CARD);
+      frame.setCursor(13, ry);
+      frame.print(shortText(String(r.ssid), 24));
+      frame.setCursor(170, ry);
+      frame.printf("ch%u", (unsigned)r.ch);
+      frame.setTextDatum(TR_DATUM);
+      frame.setTextColor(r.rssi >= -60 ? C_ACCENT : (r.rssi >= -75 ? C_TEXT : C_MUTED), C_CARD);
+      frame.drawString(String(r.rssi) + " dBm", SIDE_W - 14, ry, 1);
+      frame.setTextDatum(TL_DATUM);
+    }
+    if (g_recentCount == 0) {
+      frame.setTextColor(C_MUTED, C_CARD);
+      frame.setCursor(13, y + 18);
+      frame.print(radioIdle ? "Radio off" : "No APs yet");
+    }
+  }
+  y += SP_LIST_H + 6;
+
+  // 2.4 GHz channel activity (screenTelemetry.channelHits, channels 1..13).
+  drawCard(6, y, SIDE_W - 12, 49, "2.4 GHZ ACTIVITY");
+  {
+    uint32_t peak = 0;
+    for (int c = 1; c <= 13; ++c) peak = max(peak, screenTelemetry.channelHits[c]);
+    constexpr int SLOT = 21, BAR = 15, BAR_MAX = 20;
+    const int base = y + 38;
+    for (int c = 1; c <= 13; ++c) {
+      const int bx = 12 + (c - 1) * SLOT;
+      const int h = peak ? max(1, (int)(screenTelemetry.channelHits[c] * BAR_MAX / peak)) : 1;
+      frame.fillRect(bx, base - h, BAR, h,
+                     (c == 1 || c == 6 || c == 11) ? C_ACCENT : lerp565(C_CARD_2, C_ACCENT, 0.5f));
+      if (c == 1 || c == 6 || c == 11) {
+        frame.setTextDatum(TC_DATUM);
+        frame.setTextColor(C_MUTED, C_CARD);
+        frame.drawString(String(c), bx + BAR / 2, base + 2, 1);
+        frame.setTextDatum(TL_DATUM);
+      }
+    }
+  }
+
+  // Position strip, aligned with the page column's footer.
+  fillVGrad(frame, 0, FOOTER_Y, SIDE_W, FOOTER_H, C_INPUT, C_CARD_2);
+  frame.drawFastHLine(0, FOOTER_Y, SIDE_W, C_BORDER);
+  frame.setTextColor(gpsHasFix ? C_TEXT : C_MUTED, C_INPUT);
+  frame.setCursor(10, FOOTER_Y + 7);
+  if (gpsHasFix) frame.printf("%.6f, %.6f", gps.location.lat(), gps.location.lng());
+  else frame.print(gps.charsProcessed() > 0 ? "GPS: searching for fix" : "GPS: no data");
+  frame.setTextColor(C_MUTED, C_INPUT);
+  frame.setCursor(10, FOOTER_Y + 20);
+  frame.printf("HDOP %.1f   SD %s", gps.hdop.isValid() ? gps.hdop.hdop() : 0.0, sdOk ? "OK" : "--");
+  if (currentCsvPath.length()) {
+    frame.setTextDatum(TR_DATUM);
+    frame.drawString(shortText(pathBasename(currentCsvPath), 22), SIDE_W - 8, FOOTER_Y + 20, 1);
+    frame.setTextDatum(TL_DATUM);
+  }
+
+  // Seam against the page column.
+  frame.drawFastVLine(0, 0, SCREEN_H, C_BORDER);
+  frame.resetViewport();
+#endif
 }
 
 void ScreenUI::drawNodes() {
@@ -2130,6 +2359,7 @@ void ScreenUI::uploadLogsViaHome() {
       frame.setTextColor(C_MUTED, C_BG);
       frame.drawString(l2, 120, 178, 2);
     }
+    drawSidePanel();
     present();
     frame.setTextDatum(TL_DATUM);
   };

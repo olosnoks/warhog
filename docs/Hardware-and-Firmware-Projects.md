@@ -23,11 +23,13 @@ TFT_eSPI) and the Guition W550 (800×480 RGB via LovyanGFX). All Wi-Fi/BLE/GPS/m
 is identical; the envs differ only in the display stack and the SD backend (SDIO vs SPI).
 This is why a change to `MeshNode.cpp` affects both envs at once.
 
-- Display abstraction: `Gfx.h`, `LGFX_W550.h`, `ViewportSprite.h` (the W550 renders to a
-  RAM sprite then scale-blits to the panel).
-- **Shared-SPI hazard (CYD):** the SD card and the ILI9341 TFT are on the *same* physical
-  SPI bus (pins 10–13). Any code that writes SD and TFT from different tasks must take the
-  `SpiBusLock.h` recursive mutex — see [Adaptive Scheduler → Core isolation](Adaptive-Scheduler.md#phase-4--core-isolation).
+- Display abstraction: `Gfx.h`, `LGFX_W550.h`, `ViewportSprite.h`. The W550 renders a
+  533×320 landscape canvas (the 240-wide page column plus a live side panel) and blits it
+  ×1.5 to fill the 800×480 panel — see [Display & UI](Display-and-UI.md#w550-landscape-layout).
+- **Cross-core SD access:** neither S3 board shares an SPI bus between SD and TFT
+  (Freenove: TFT on SPI 10–13, SD on 4-bit SDIO; W550: RGB TFT, SD on SPI). With core
+  isolation on, the core-0 SD-log task and core-1 SD users (file moves, config saves) must
+  both take the `SpiBusLock.h` recursive mutex — see [Adaptive Scheduler → Core isolation](Adaptive-Scheduler.md#phase-4--core-isolation).
 
 ## The C5 family shares headers
 `warhog_fork` (Core/solo), `WarHogNode` (worker), and `TDongleC5_WarHog` (dongle) all run

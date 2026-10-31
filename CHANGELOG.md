@@ -7,6 +7,27 @@ the base firmware history.
 
 ## Unreleased
 
+### W550: full-panel landscape layout (phase 2)
+- **The Guition W550 now uses the whole 800×480 panel.** Phase 1 scaled the
+  240×320 portrait UI ×1.5 to 360×480 and left 220 px bars on each side. The
+  frame is now a **533×320 landscape canvas**, blitted ×1.5 edge to edge. The
+  page column (x 0–239) is unchanged, so every page and tap handler works as
+  before, with the same fonts and proportions as the CYD.
+- **New live side panel** (`drawSidePanel()`, x 240–532), shown on every page:
+  mode + UTC clock, four tiles (2.4/5 GHz/BLE/speed solo; nodes/records/sats/
+  speed in Core), a **CLUSTER** roster of up to 12 nodes (group, MAC, records,
+  channels; stale nodes in amber) or a **RECENT APS** feed in solo, 2.4 GHz
+  channel-activity bars, and a position strip. The recent-AP ring is sampled at
+  draw time and lives in PSRAM, so it costs the scan path and internal heap
+  nothing.
+- Touch maps ÷1.5 across the canvas. The panel is display-only: touches that
+  start there are ignored and drags onto it are clamped. The splash is centred,
+  and the redraw interval is capped at 1 s so the panel stays current on
+  slow-refresh pages.
+- All under `BOARD_W550`; the Freenove build is unchanged (same static RAM). Both
+  envs build. **Built, not yet flashed**: needs a check on real W550 hardware.
+- Also fixed one more stale shared-SPI claim (`docs/Hardware-and-Firmware-Projects.md`).
+
 ### 12-node scale sign-off kit
 - **New `scripts/mesh_signoff.py`** grades a Core's serial output against the
   DESIGN §13 acceptance at the user's 12-node ceiling: time at target, no RX

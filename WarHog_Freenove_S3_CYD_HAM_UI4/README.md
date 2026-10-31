@@ -24,7 +24,7 @@ The firmware is built and configured via PlatformIO for two distinct hardware pl
 ## 2. Hardware Pinout Reference
 
 ### Guition JC8048W550
-* **Display (RGB Parallel):** Controlled via LovyanGFX in `LGFX_W550.h`
+* **Display (RGB Parallel):** Controlled via LovyanGFX in `LGFX_W550.h`. Landscape layout: the touch UI on the left plus a live status panel (cluster roster / recent APs, channel activity, position) on the right — see the [Display & UI wiki](../docs/Display-and-UI.md#w550-landscape-layout)
 * **Backlight:** GPIO 2 (PWM dimming supported)
 * **Touch (GT911):** SDA = GPIO 19, SCL = GPIO 20, INT = GPIO 18
 * **GPS (UART1):** RX = GPIO 44, TX = GPIO 43
