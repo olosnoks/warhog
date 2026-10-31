@@ -157,6 +157,7 @@ static void cmdGetPath(const char* path) {
   uint8_t  raw[384];                        // 384 B -> 512 base64 chars per WT DATA line
   char     b64[520];
   uint32_t acc = 0xFFFFFFFFu;
+  size_t   sent = 0;
   while (true) {
     int n = f.read(raw, sizeof(raw));
     if (n <= 0) break;
@@ -164,9 +165,12 @@ static void cmdGetPath(const char* path) {
     b64enc(raw, n, b64);
     Serial.print("WT DATA ");
     Serial.println(b64);
+    sent += (size_t)n;
     yield();
   }
+  size_t want = f.size();
   f.close();
+  if (sent != want) { Serial.printf("WT ERR read %u/%u\n", (unsigned)sent, (unsigned)want); return; }
   Serial.printf("WT END %08lX\n", (unsigned long)(acc ^ 0xFFFFFFFFu));
 }
 

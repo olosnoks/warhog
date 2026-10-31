@@ -173,11 +173,27 @@ static void cmdGetPath(const char* path) {
   Serial.printf("WT BEGIN %lu\n", (unsigned long)st.st_size);
   char     b64[520];
   uint32_t acc = 0xFFFFFFFFu;
-  while (true) {
+  const size_t want = (size_t)st.st_size;
+  size_t   sent = 0;
+  int      retries = 0;
+  while (sent < want) {
     spiBusLock();
     int n = ::read(fd, s_getBuf, sizeof(s_getBuf));
     spiBusUnlock();
-    if (n <= 0) break;
+    if (n <= 0) {
+      // Mid-file read error (marginal SD bus): remount, reopen at the same
+      // offset and carry on -- the bytes already sent stay valid.
+      if (retries++ >= 3) break;
+      Serial.printf("[TK] GET read error at %u, recovering\n", (unsigned)sent);
+      spiBusLock(); ::close(fd); spiBusUnlock();
+      if (!sdTryRecover()) { delay(4100); sdTryRecover(); }   // wait out the 4 s rate limit once
+      spiBusLock();
+      fd = ::open(full.c_str(), O_RDONLY);
+      if (fd >= 0 && lseek(fd, (off_t)sent, SEEK_SET) != (off_t)sent) { ::close(fd); fd = -1; }
+      spiBusUnlock();
+      if (fd < 0) break;
+      continue;
+    }
     for (int off = 0; off < n; off += 384) {
       int len = n - off < 384 ? n - off : 384;
       acc = crc32_run(acc, s_getBuf + off, len);
@@ -185,9 +201,11 @@ static void cmdGetPath(const char* path) {
       Serial.print("WT DATA ");
       Serial.println(b64);
     }
+    sent += (size_t)n;
     yield();
   }
-  spiBusLock(); ::close(fd); spiBusUnlock();
+  if (fd >= 0) { spiBusLock(); ::close(fd); spiBusUnlock(); }
+  if (sent != want) { Serial.printf("WT ERR read %u/%u\n", (unsigned)sent, (unsigned)want); return; }
   Serial.printf("WT END %08lX\n", (unsigned long)(acc ^ 0xFFFFFFFFu));
 }
 

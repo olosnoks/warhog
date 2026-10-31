@@ -57,11 +57,15 @@ bool isAllowedDataPath(const String& p) {
 // cfg.sdMaxSpiHz) and returns as soon as one mounts successfully, so the
 // card runs as fast as the wiring/card actually supports instead of being
 // pinned to a conservative fixed speed.
+static const uint32_t kLadder[] = {
+  20000000, 16000000, 12000000, 8000000, 4000000, 1000000
+};
+static uint32_t sdRunHz    = 0;   // clock the card mounted at
+static uint32_t sdDynCapHz = 0;   // lowered by sdTryRecover() when the bus proves flaky (0 = none)
+
 bool sdBeginBestClock(uint8_t csPin) {
-  static const uint32_t kLadder[] = {
-    20000000, 16000000, 12000000, 8000000, 4000000, 1000000
-  };
   uint32_t capHz = (cfg.sdMaxSpiHz > 0) ? cfg.sdMaxSpiHz : 20000000;
+  if (sdDynCapHz && sdDynCapHz < capHz) capHz = sdDynCapHz;
 
   for (size_t i = 0; i < sizeof(kLadder) / sizeof(kLadder[0]); i++) {
     uint32_t hz = kLadder[i];
@@ -69,6 +73,7 @@ bool sdBeginBestClock(uint8_t csPin) {
 
     if (SD.begin(csPin, SPI, hz)) {
       Serial.printf("[SD] Running at %lu Hz\n", (unsigned long)hz);
+      sdRunHz = hz;
       return true;
     }
     SD.end();
@@ -78,6 +83,7 @@ bool sdBeginBestClock(uint8_t csPin) {
   // ladder rung exactly (e.g. a user set sdMaxSpiHz=25000000).
   if (capHz > 0 && SD.begin(csPin, SPI, capHz)) {
     Serial.printf("[SD] Running at %lu Hz\n", (unsigned long)capHz);
+    sdRunHz = capHz;
     return true;
   }
 
@@ -96,7 +102,16 @@ bool sdTryRecover() {
   if (now - sdLastRecoverMs < 4000) return false;
   sdLastRecoverMs = now;
 
-  Serial.println("[SD] Attempting SD bus recovery (SD.end + reinit)...");
+  // A wedge means the clock the card mounted at isn't reliable on this
+  // card/wiring: remount one rung slower (never below 4 MHz). Lasts until reboot;
+  // set sdMaxSpiHz in wardriver.cfg to make it permanent.
+  for (size_t i = 0; i + 1 < sizeof(kLadder) / sizeof(kLadder[0]); i++) {
+    if (sdRunHz && kLadder[i] <= sdRunHz) {
+      if (kLadder[i + 1] >= 4000000) sdDynCapHz = kLadder[i + 1];
+      break;
+    }
+  }
+  Serial.printf("[SD] Attempting SD bus recovery (SD.end + reinit, cap %lu Hz)...\n", (unsigned long)sdDynCapHz);
   SD.end();
   delay(50);
   bool ok = sdBeginBestClock(pins.sd_cs);

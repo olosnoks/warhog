@@ -74,6 +74,16 @@ the base firmware history.
   removes an empty folder, and refuses the log currently being written
   (`WT ERR busy`), so that log and its folder are kept. Deleting folders needs
   this firmware.
+- **Downloads no longer fail on big or flaky files.**
+  - The Toolkit's request timeout is now an idle timeout, so a large log no longer
+    fails at the old 120-second total limit.
+  - A file that arrives short or garbled is rejected instead of saved truncated,
+    and is retried once automatically.
+  - Firmware GET on every board reports `WT ERR read` on a mid-file read error,
+    instead of a `WT END` that made a truncated file look complete.
+  - XIAO C5: GET remounts the card and resumes at the same offset after a read
+    error. Each SD recovery also lowers the SD clock one step (20 → 16 → 12 MHz,
+    not below 4), so a marginal card settles at a speed it can sustain.
 - The flasher loads `toolkit.js?v=<build>`, so browsers pick up a new Toolkit
   right after a deploy instead of running a cached copy.
 - **Config editor: form only.** Removed the Raw tab; the form still edits the file

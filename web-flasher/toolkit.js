@@ -105,15 +105,19 @@
 
   // Run one operation: install a line handler, send the command, resolve when the
   // handler calls done()/fail(). Only one op at a time (the UI serializes).
+  // timeoutMs is an idle timeout: it restarts on every line from the device, so a
+  // long download only fails if the Piglet goes quiet, not because it is big.
   function op(sendFn, handlerFactory, timeoutMs) {
     return new Promise((resolve, reject) => {
-      let settled = false;
-      const t = setTimeout(() => finish(() => reject(new Error('timeout'))), timeoutMs || 15000);
+      let settled = false, t = null;
+      const arm = () => { clearTimeout(t); t = setTimeout(() => finish(() => reject(new Error('timeout'))), timeoutMs || 15000); };
       function finish(fn) { if (settled) return; settled = true; clearTimeout(t); lineHandler = null; fn(); }
-      lineHandler = handlerFactory(
+      arm();
+      const handler = handlerFactory(
         (val) => finish(() => resolve(val)),
         (err) => finish(() => reject(err instanceof Error ? err : new Error(String(err))))
       );
+      lineHandler = (line) => { arm(); handler(line); };
       Promise.resolve(sendFn()).catch((e) => finish(() => reject(e)));
     });
   }
@@ -163,19 +167,34 @@
       if (line.startsWith('WT BEGIN ')) {
         size = +line.slice(9).trim();
       } else if (line.startsWith('WT DATA ')) {
-        const bytes = b64decode(line.slice(8));
+        let bytes;
+        // Another task's log line can land mid-line on the device's USB serial;
+        // fail this attempt (getRetry fetches the file again) instead of throwing.
+        try { bytes = b64decode(line.slice(8)); } catch (e) { fail('garbled data line'); return; }
         chunks.push(bytes); received += bytes.length;
         if (onProgress && size) onProgress(received, size);
       } else if (line.startsWith('WT END ')) {
         const crc = parseInt(line.slice(7).trim(), 16) >>> 0;
         const out = new Uint8Array(received);
         let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+        if (received !== size) { fail('short read (' + received + ' of ' + size + ' B)'); return; }
         if ((crc32(out) >>> 0) !== crc) { fail('CRC mismatch'); return; }
         done(out);
       } else if (line.startsWith('WT ERR')) {
         fail(line.slice(3).trim());
       }
-    }, 120000);
+    }, 30000);
+  }
+
+  // GET with one automatic retry (a flaky SD read on the device, a USB hiccup).
+  // "open" errors are not retried: the file isn't there.
+  async function getRetry(path, onProgress) {
+    try { return await get(path, onProgress); }
+    catch (e) {
+      if (/open|nosd/.test(e.message)) throw e;
+      log('GET ' + path + ' failed (' + e.message + '), retrying…');
+      return await get(path, onProgress);
+    }
   }
 
   async function putBytes(cmd, bytes, onProgress) {
@@ -481,7 +500,7 @@
   }
 
   function fetchFile(it) {
-    return get(it.path, (r, t) => { $('tkStatus').textContent = 'reading ' + it.name + ' ' + fmtSize(r) + ' / ' + fmtSize(t); });
+    return getRetry(it.path, (r, t) => { $('tkStatus').textContent = 'reading ' + it.name + ' ' + fmtSize(r) + ' / ' + fmtSize(t); });
   }
 
   async function downloadItems(items) {
@@ -539,7 +558,7 @@
     let done = 0;
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
-      const bytes = await get(f.path, (r) => {
+      const bytes = await getRetry(f.path, (r) => {
         $('tkStatus').textContent = 'saving ' + (i + 1) + '/' + files.length + ' · ' + fmtSize(done + r) + ' / ' + fmtSize(total);
       });
       done += bytes.length;
