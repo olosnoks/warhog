@@ -5,6 +5,7 @@
 #include "SDUtils.h"
 #include "BLEBridge.h"   // solo wardriving mirrors its own records to the phone app
 #include "PigWorld.h"
+#include "IosEspCompat.h"  // Wardrive Go -ch channel-plan override
 
 static String authModeToString(wifi_auth_mode_t m) {
   switch (m) {
@@ -151,12 +152,24 @@ void doScanOnce() {
   if (millis() - lastScanStartMs < gapMs) return;
 
   // ---- Kick off a new async scan ----
-  // async=true, show_hidden=true, passive=false, max_ms_per_chan=dwellMs
+  // When a Wardrive Go phone has narrowed the channel plan (-ch), scan ONE of
+  // those channels per cycle, rotating through them, so the radio focuses where
+  // the phone asked. This keeps the async, non-blocking flow (one channel still
+  // uses the same scanComplete() path). Otherwise sweep every channel (0).
+  uint8_t planBuf[48]; uint8_t planN = 0;
+  uint8_t scanChan = 0;   // 0 = all channels
+  if (iosEspCompatChannelOverride(planBuf, &planN) && planN > 0) {
+    static uint8_t s_planIdx = 0;
+    scanChan = planBuf[s_planIdx % planN];
+    s_planIdx++;
+  }
+  // async=true, show_hidden=true, passive=false, max_ms_per_chan=dwellMs, channel=scanChan
   int16_t rc = WiFi.scanNetworks(/*async*/true, /*show_hidden*/true,
-                                 /*passive*/false, dwellMs);
+                                 /*passive*/false, dwellMs, scanChan);
   if (rc == WIFI_SCAN_RUNNING || rc == 0) {
     scanInProgress = true;
-    Serial.printf("[SCAN] Async scan started (dwell=%lu ms)\n", (unsigned long)dwellMs);
+    if (scanChan) Serial.printf("[SCAN] Async scan started (ch %u, dwell=%lu ms)\n", scanChan, (unsigned long)dwellMs);
+    else          Serial.printf("[SCAN] Async scan started (dwell=%lu ms)\n", (unsigned long)dwellMs);
   } else {
     // Shouldn’t normally happen; fall back and retry after gap
     Serial.printf("[SCAN] scanNetworks start failed (%d)\n", rc);

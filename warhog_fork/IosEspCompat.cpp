@@ -126,6 +126,21 @@ static void ieSetChannelPlan(const char* s) {
   memcpy(iePlan, tmp, n); iePlanCount = n;
 }
 
+// True when a connected, streaming phone has narrowed the plan below every
+// supported channel; fills out (>=48 bytes) with that list. Lets the scan loop
+// scan only those channels. False when no phone is streaming or the plan is
+// still every channel.
+bool iosEspCompatChannelOverride(uint8_t* out, uint8_t* outCount) {
+  if (!out || !outCount) return false;
+  if (!(ieActive && ieNotifyOn && ieStreaming)) return false;
+  ieComputeSupported();
+  if (iePlanCount == 0 || iePlanCount >= ieSupportedCount) return false;
+  uint8_t n = iePlanCount > 48 ? 48 : iePlanCount;
+  memcpy(out, iePlan, n);
+  *outCount = n;
+  return true;
+}
+
 // Inbound command ring (write cb enqueues raw bytes; tick drains/replies).
 #define IE_CMD_SLOT_LEN 128
 #define IE_CMD_RING     8

@@ -56,3 +56,10 @@ void iosEspCompatPushGps(double lat, double lon, double altMeters, int sats);
 // (unlike WD:BEGIN, which must never be replayed). Optional: the first
 // iosEspCompatPushGps() also flips it on.
 void iosEspCompatSetGpsPresent(bool present);
+
+// True when a connected, streaming Wardrive Go phone has narrowed the channel
+// plan below every supported channel (via `-ch` / `ch`). Fills `out` (capacity
+// >= 48) with that channel list and `outCount` with its length, so the Solo
+// scan loop can scan only those channels instead of sweeping all. False when no
+// phone is streaming or the plan is still every channel.
+bool iosEspCompatChannelOverride(uint8_t* out, uint8_t* outCount);

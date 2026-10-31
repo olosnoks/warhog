@@ -1090,6 +1090,7 @@ static bool uploadFileToWardrift(const String& path) {
   Serial.printf("[Wardrift] HTTP %d  body: %s\n", code, body.substring(0,160).c_str());
 
   if (code == 200) {
+    bool dup = body.indexOf("\"duplicate\":true") >= 0 || body.indexOf("\"duplicate\": true") >= 0;
     int asIdx = body.indexOf("\"accepted_signals\":");
     String countStr = "";
     if (asIdx >= 0) {
@@ -1097,13 +1098,17 @@ static bool uploadFileToWardrift(const String& path) {
       while (end < (int)body.length() && isDigit(body[end])) end++;
       countStr = body.substring(start, end);
     }
-    uploadLastResult = countStr.length() ? "Uploaded OK (" + countStr + " signals)" : "Uploaded OK (200)";
+    uploadLastResult = dup ? "Already uploaded (duplicate)"
+                      : countStr.length() ? "Uploaded OK (" + countStr + " signals)" : "Uploaded OK (200)";
     return true;
   }
+  // 409 is a transient sequence_conflict (or reused idempotency key), NOT a
+  // duplicate (a real duplicate returns 200 with "duplicate":true). Leave the
+  // file for a later retry instead of moving it out as if accepted.
   if (code == 409) {
-    uploadLastResult = "Already uploaded (duplicate)";
-    Serial.println("[Wardrift] 409 -- treating as already-uploaded success");
-    return true;
+    uploadLastResult = "Wardrift busy (409) -- will retry";
+    Serial.println("[Wardrift] 409 (sequence conflict) -- leaving file for retry");
+    return false;
   }
 
   String msg = "";
