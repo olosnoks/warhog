@@ -7,6 +7,42 @@ the base firmware history.
 
 ## Unreleased
 
+### Batched, PSRAM-backed SD logging + `/archived` folder
+- **CSV rows are buffered and written to SD in batches of 100** instead of one
+  write per network, with a time-based safety flush (~20 s) so a partial batch
+  isn't lost on power-off. The buffer is allocated in **PSRAM** when present
+  (freeing ~25 KB of internal RAM) and falls back to internal RAM otherwise.
+  Across `warhog_fork`, `WarHog_Freenove_S3` (S3 + W550), TDongleC5, and Waveshare.
+- **PSRAM enabled on the XIAO C5 build** (`board_build.arduino.memory_type=qio_qspi`)
+  so the batch buffer actually lands in PSRAM there.
+- **`/archived` folder.** Files the firmware would auto-delete (empty/header-only
+  CSVs from the boot/upload cleanup) are moved to `/archived` instead of being
+  erased, so the device never silently removes a file. User-initiated Web UI
+  deletes are unchanged. (`warhog_fork`, S3/W550, TDongleC5)
+
+### Wardrift (`wardrift.net`) upload fixes
+- **CSV rotation cap lowered 29 → 9 MiB** so every log fits Wardrift's
+  `/v1/ingest/signals` raw-upload limit (10 MiB / 200k records); still well within
+  WiGLE/WDGWars limits.
+- **Correct 409 / duplicate handling.** A real duplicate (`200` + `"duplicate":true`)
+  is detected; a `409` is treated as a transient sequence-conflict and the file is
+  left in `/logs` for retry instead of being moved out as if accepted.
+
+### Wardrive Go comms parity with upstream Piglet (`IosEspCompat`)
+- **Numeric `WD:CAPS fw=1<major>.<minor>.00`** (derived from `FIRMWARE_VERSION`) so
+  the Wardrive Go / WarBLE Go app's number-by-number "outdated firmware" check
+  accepts the board — was the non-numeric `warhog-1.0`. Applied to `warhog_fork`
+  and the main S3/W550 build.
+- **Real `bands`/`chans` in `WD:CAPS`** (2g,5g + full channel list on a C5 or Core,
+  else 2g + ch 1–14), and the phone's **`-ch` channel plan** is honored in `WD:PLAN`,
+  in forwarded APs, and in the Solo scan loop (scans only the requested channels,
+  reverting to a full sweep when the phone disconnects).
+
+### Web flasher
+- Board **dropdown** (one card at a time) replaces the all-boards grid; a **How to
+  use the flasher** card; and a **What's new** card that renders this
+  `CHANGELOG.md`'s newest section live (copied into the site at deploy time).
+
 ### Fix saved cluster profiles not loading after a reboot (CYD/W550)
 - **Profiles saved on the Core didn't come back after a CYD reboot.** Same root cause as the
   settings-persistence fix below: `meshProfilesSaveToSD()` and `meshProfilesLoad()` accessed
