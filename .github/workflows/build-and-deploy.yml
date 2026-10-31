@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write   # write: attach built firmware to the GitHub Release on a v* tag
   pages: write
   id-token: write
 
@@ -152,3 +152,27 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
+
+  # On a version tag (v*), publish a GitHub Release with the same firmware the
+  # flasher serves: each board's merged first-flash .bin plus its .ota.bin, so
+  # people get stable versioned download links and an OTA source. No-op on
+  # manual (workflow_dispatch) runs, which have no tag.
+  release:
+    name: Attach firmware to the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect built firmware
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fw-*
+          path: _fw
+          merge-multiple: true
+
+      - name: Publish release with firmware attached
+        uses: softprops/action-gh-release@v2
+        with:
+          files: _fw/*.bin
+          generate_release_notes: true
+          fail_on_unmatched_files: true

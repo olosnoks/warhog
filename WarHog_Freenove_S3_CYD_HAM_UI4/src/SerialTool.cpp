@@ -1,10 +1,9 @@
 #include "SerialTool.h"
-#include "Globals.h"      // sdOk, logFile, FIRMWARE_VERSION
+#include "Globals.h"      // sdOk, logFile, FIRMWARE_VERSION, and the SD/FS backend
+                          // (StorageCompat.h: SD on W550, SD_MMC-as-SD on the CYD)
 #include "Config.h"       // cfg, loadConfigFromSD()
 #include "SDUtils.h"      // normalizeSdPath(), sdLogFlushNow()
 #include "SpiBusLock.h"   // spiBusLock()/spiBusUnlock() (no-op unless PIG_FEAT_CORE_ISO)
-#include <SD.h>
-#include <FS.h>
 #include <string.h>
 #include <stdlib.h>
 

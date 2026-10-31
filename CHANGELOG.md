@@ -7,6 +7,18 @@ the base firmware history.
 
 ## Unreleased
 
+### Piglet Toolkit (USB) + firmware attached to GitHub Releases
+- **Piglet Toolkit on the web flasher.** Connect over the same USB cable used for
+  flashing to browse the SD card (list/download/upload/delete across `/logs`,
+  `/uploaded`, `/archived`, `/`) and edit `wardriver.cfg` (structured form + raw
+  tab). Backed by a new line-based `WT` serial protocol (base64 + CRC32) in the
+  S3/W550, XIAO C5, Waveshare C6 and T-Dongle C5 firmware; a session pauses scanning.
+- **Firmware on GitHub Releases.** Pushing a `v*` tag now publishes a Release with
+  every board's merged first-flash `.bin` and `.ota.bin` attached — the same images
+  the flasher serves.
+- Fixed a CYD/W550 build break: `SerialTool.cpp` included `<SD.h>` on top of
+  `StorageCompat.h`'s `SD`→`SD_MMC` remap.
+
 ### Batched, PSRAM-backed SD logging + `/archived` folder
 - **CSV rows are buffered and written to SD in batches of 100** instead of one
   write per network, with a time-based safety flush (~20 s) so a partial batch
