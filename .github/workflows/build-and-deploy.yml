@@ -130,6 +130,8 @@ jobs:
           # in so docs.html can fetch and render it on the deployed site.
           mkdir -p web-flasher/docs
           cp -v docs/*.md web-flasher/docs/
+          # Copy the changelog so index.html's "What's new" card can fetch/render it.
+          cp -v CHANGELOG.md web-flasher/CHANGELOG.md
           VERSION="${GITHUB_REF_NAME}+${GITHUB_SHA::7}"
           echo "Stamping version: $VERSION"
           # Substitute __VERSION__ in the pages and every manifest.

@@ -7,7 +7,6 @@ the base firmware history.
 
 ## Unreleased
 
-<<<<<<< HEAD
 ### Fix saved cluster profiles not loading after a reboot (CYD/W550)
 - **Profiles saved on the Core didn't come back after a CYD reboot.** Same root cause as the
   settings-persistence fix below: `meshProfilesSaveToSD()` and `meshProfilesLoad()` accessed
@@ -17,7 +16,7 @@ the base firmware history.
   and logs `[PROFILE] Saved /mesh_profiles.cfg` or a failure to open the file on serial.
 - Verified on a Freenove CYD (assign nodes to sub-clusters → save profile → reboot → load). Not
   yet tested on the Guition JC8048W550.
-=======
+
 ### Wardrive Go (`iosESP-XXXX`) bridge + solo PigWorld defaults on XIAO C5 (`warhog_fork`)
 - **Wardrive Go support across Solo, Mesh Node, and Mesh Core modes.** Added `IosEspCompat`
   (`iosESP-XXXX` GATT service + primary UUID advertising, disconnect/stop-advertising handling so
@@ -27,7 +26,6 @@ the base firmware history.
 - **Boot straight into animated PigWorld in Solo wardriving mode.** Default `meshModeOnBoot` is now
   `none` (Solo mode on page 4 with randomized PigWorld terrain/sky and active scanning even while
   the SoftAP window is idle or without an SD card / GPS fix).
->>>>>>> 61d80f2 (feat(warhog_fork): Wardrive Go (iosESP) BLE bridge in all modes + solo PigWorld boot defaults)
 
 ### Fix the Wardrive Go phone bridge and settings persistence (CYD/W550)
 - **Wardrive Go couldn't see the Core.** The iosESP/GhostESP bridge was advertising as

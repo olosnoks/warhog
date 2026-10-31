@@ -137,6 +137,26 @@
   pre{background:var(--input);border:1px solid var(--border);border-radius:7px;padding:11px;overflow:auto;font-size:12px;color:var(--text);margin:9px 0 0;font-family:ui-monospace,Menlo,Consolas,monospace}
   pre .c{color:var(--muted)}
 
+  /* board picker dropdown */
+  .lbl{display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:0 0 6px}
+  .selWrap{position:relative;margin-bottom:14px}
+  .selWrap::after{content:"\25BE";position:absolute;right:13px;top:50%;transform:translateY(-50%);color:var(--accent);pointer-events:none;font-size:12px}
+  select{appearance:none;-webkit-appearance:none;width:100%;padding:10px 34px 10px 12px;border-radius:8px;border:1px solid var(--inputBorder);background:var(--input);color:var(--text);font:600 14px system-ui,sans-serif;cursor:pointer}
+  select:focus{outline:2px solid var(--accent);outline-offset:1px}
+  /* how-to steps */
+  ol.steps{margin:0;padding-left:20px;font-size:13px}
+  ol.steps li{margin:5px 0}
+  /* what's-new (rendered from CHANGELOG.md) */
+  .feat{font-size:13px}
+  #whatsnew{max-height:340px;overflow:auto}
+  .feat .rel{font-weight:700;color:var(--accent);margin:0 0 6px}
+  .feat .relh{font-weight:600;color:var(--text);font-size:12.5px;margin:12px 0 4px}
+  .feat ul{list-style:none;margin:0;padding:0}
+  .feat li{position:relative;padding:5px 0 5px 20px;color:var(--muted)}
+  .feat li::before{content:"\25B9";position:absolute;left:0;color:var(--accent)}
+  .feat b{color:var(--text);font-weight:600}
+  .feat code{font-size:11.5px}
+
   footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--border);color:var(--muted);font-size:12px;display:flex;gap:14px;flex-wrap:wrap;justify-content:space-between}
 </style>
 </head>
@@ -167,7 +187,31 @@
   </div>
 
   <div class="card">
+    <h3>How to use the flasher</h3>
+    <ol class="steps">
+      <li>Plug your board into the computer with a <b>data</b> USB cable — directly, not through a hub.</li>
+      <li>Pick your board from the <b>dropdown</b> below.</li>
+      <li>If a <b>Firmware</b> toggle appears (the C5 boards), choose <i>skon&rsquo;s fork</i> or <i>official</i>.</li>
+      <li>Click <b style="color:var(--text)">Install</b> and select the serial port when the browser asks.</li>
+      <li>Let it finish, then <b>unplug and replug</b> (or power-cycle) to boot the new firmware.</li>
+      <li>No port listed? Install the <b>CP210x / CH343</b> USB driver and try again.</li>
+    </ol>
+  </div>
+
+  <div class="card">
     <h3>Boards</h3>
+    <label class="lbl" for="boardSelect">Select your board</label>
+    <div class="selWrap">
+      <select id="boardSelect" aria-label="Select your board">
+        <option>Freenove S3 CYD &mdash; ESP32-S3 &middot; 2.8&Prime; touch</option>
+        <option>Guition JC8048W550 &mdash; ESP32-S3 &middot; 5&Prime; 800&times;480</option>
+        <option>WarHogNode C3 &mdash; ESP32-C3 &middot; mesh node</option>
+        <option>WarHog Core &mdash; XIAO C5 &middot; dual-band</option>
+        <option>WarHogNode C5 &mdash; mesh node</option>
+        <option>LilyGo T-Dongle C5 &mdash; 0.96&Prime; TFT</option>
+        <option>Waveshare C6 Mini &mdash; 1.47&Prime; LCD</option>
+      </select>
+    </div>
     <div class="grid">
 
       <!-- Freenove S3 CYD -->
@@ -335,6 +379,12 @@ esptool --chip esp32c5 --no-stub write-flash 0x0 TDongleC5_Piglet.ino.merged.bin
     </div>
   </div>
 
+  <div class="card">
+    <h3>What&rsquo;s new</h3>
+    <div class="feat" id="whatsnew"><span class="muted">Loading changelog&hellip;</span></div>
+    <p class="muted" style="font-size:12px;margin:10px 0 0">From <a href="https://github.com/olosnoks/warhog/blob/main/CHANGELOG.md">CHANGELOG.md</a> &middot; <a href="docs.html">documentation &rarr;</a></p>
+  </div>
+
   <footer>
     <span><a href="https://github.com/olosnoks/warhog">github.com/olosnoks/warhog</a> · GPL</span>
     <span><a href="docs.html">documentation →</a></span>
@@ -347,6 +397,60 @@ esptool --chip esp32c5 --no-stub write-flash 0x0 TDongleC5_Piglet.ino.merged.bin
 <script src="screens.js"></script>
 <script>
   mountPigScreens();
+
+  // Board dropdown: show only the selected board card (options are in the same
+  // order as the .board cards in the grid).
+  (function boardPicker(){
+    var sel = document.getElementById('boardSelect');
+    if(!sel) return;
+    var boards = Array.prototype.slice.call(document.querySelectorAll('.card .grid .board'));
+    function show(i){ boards.forEach(function(b,k){ b.style.display = (k === i) ? '' : 'none'; }); }
+    sel.addEventListener('change', function(){ show(sel.selectedIndex); });
+    show(sel.selectedIndex < 0 ? 0 : sel.selectedIndex);
+  })();
+
+  // "What's new": fetch the repo CHANGELOG.md (copied in beside this page by the
+  // deploy workflow) and render its newest section. Trusted-content-only mini
+  // Markdown — the source is always our own repo's changelog.
+  (function whatsNew(){
+    var box = document.getElementById('whatsnew');
+    if(!box || !window.fetch) return;
+    function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function inl(s){
+      return esc(s)
+        .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+        .replace(/\*([^*]+)\*/g,'<i>$1</i>')
+        .replace(/`([^`]+)`/g,'<code>$1</code>')
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+    }
+    fetch('CHANGELOG.md',{cache:'no-cache'}).then(function(r){
+      if(!r.ok) throw 0; return r.text();
+    }).then(function(md){
+      var lines = md.split(/\r?\n/), html='', inList=false, sections=0, started=false;
+      for(var i=0;i<lines.length;i++){
+        var ln = lines[i], m;
+        if((m = ln.match(/^##\s+(.+)/))){            // release header
+          if(++sections > 1) break;                   // only the newest section
+          started = true; html += '<div class="rel">'+inl(m[1])+'</div>'; continue;
+        }
+        if(!started) continue;
+        if((m = ln.match(/^###\s+(.+)/))){            // entry header
+          if(inList){ html+='</ul>'; inList=false; }
+          html += '<div class="relh">'+inl(m[1])+'</div>'; continue;
+        }
+        if((m = ln.match(/^\s*[-*]\s+(.+)/))){        // bullet
+          if(!inList){ html+='<ul>'; inList=true; }
+          html += '<li>'+inl(m[1])+'</li>'; continue;
+        }
+        // other lines (paragraphs/blank/continuations) skipped for brevity
+      }
+      if(inList) html += '</ul>';
+      box.innerHTML = html || '<span class="muted">No recent changes.</span>';
+    }).catch(function(){
+      box.innerHTML = '<span class="muted">Changelog unavailable — see the '
+        + '<a href="https://github.com/olosnoks/warhog/blob/main/CHANGELOG.md">full changelog on GitHub</a>.</span>';
+    });
+  })();
 
   // Fork / official firmware-source toggle on dual-source cards.
   (function mountFwToggles(){
