@@ -1,4 +1,5 @@
 #include "IosEspCompat.h"
+#include "PsramAlloc.h"   // big rings live in PSRAM (internal DRAM is scarce)
 #include "BoardPins.h"
 #include "Globals.h"     // FIRMWARE_VERSION
 #include "Config.h"      // wardriverIsC5()
@@ -145,7 +146,7 @@ bool iosEspCompatChannelOverride(uint8_t* out, uint8_t* outCount) {
 #define IE_CMD_SLOT_LEN 256
 #define IE_CMD_RING     8
 struct IeCmdSlot { uint8_t data[IE_CMD_SLOT_LEN]; uint16_t len; };
-static IeCmdSlot         ieCmdRing[IE_CMD_RING];
+static IeCmdSlot*        ieCmdRing = psramCalloc<IeCmdSlot>(IE_CMD_RING);
 static volatile uint8_t  ieCmdHead = 0;
 static volatile uint8_t  ieCmdTail = 0;
 
@@ -154,7 +155,7 @@ static volatile uint8_t  ieCmdTail = 0;
 #define IE_TX_RING     64
 #define IE_TX_PER_TICK 48
 struct IeTxSlot { uint8_t data[IE_TX_SLOT_LEN]; uint8_t len; };
-static IeTxSlot          ieTxRing[IE_TX_RING];
+static IeTxSlot*         ieTxRing = psramCalloc<IeTxSlot>(IE_TX_RING);
 static volatile uint8_t  ieTxHead = 0;
 static volatile uint8_t  ieTxTail = 0;
 

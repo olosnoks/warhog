@@ -6,6 +6,10 @@
 #include <FS.h>
 #include <string.h>
 #include <stdlib.h>
+#include <fcntl.h>      // POSIX open/read for GET (see cmdGetPath)
+#include <unistd.h>
+#include <sys/stat.h>
+#include "esp_attr.h"   // DMA_ATTR
 
 // The XIAO C5 has no shared SD/TFT SPI bus, so no bus lock is needed here.
 static inline void spiBusLock()   {}
@@ -144,29 +148,42 @@ static void putData(const char* b64) {
   }
 }
 
+// Reads go through POSIX read() into an internal, 64-byte-aligned DMA buffer
+// instead of File::read(). File's 4 KiB stdio buffer can be allocated in PSRAM
+// when internal RAM is tight; the SD driver then DMAs whole sectors into PSRAM
+// and the CPU can read stale cached bytes (seen on the S3 CYD as a "corrupt"
+// wardriver.cfg). The buffer is a multiple of 384 so each read() splits evenly
+// into WT DATA lines.
+static DMA_ATTR uint8_t s_getBuf[1536] __attribute__((aligned(64)));
+
 static void cmdGetPath(const char* path) {
   if (!sdOk) { Serial.println("WT ERR nosd"); return; }
   sdLogFlushNow();
+  String full = String(SD.mountpoint()) + path;
   spiBusLock();
-  File f = SD.open(path, FILE_READ);
+  int fd = ::open(full.c_str(), O_RDONLY);
+  struct stat st;
+  if (fd >= 0 && (fstat(fd, &st) != 0 || S_ISDIR(st.st_mode))) { ::close(fd); fd = -1; }
   spiBusUnlock();
-  if (!f || f.isDirectory()) { if (f) f.close(); Serial.println("WT ERR open"); return; }
-  Serial.printf("WT BEGIN %lu\n", (unsigned long)f.size());
-  uint8_t raw[384];
-  char    b64[520];
+  if (fd < 0) { Serial.println("WT ERR open"); return; }
+  Serial.printf("WT BEGIN %lu\n", (unsigned long)st.st_size);
+  char     b64[520];
   uint32_t acc = 0xFFFFFFFFu;
   while (true) {
     spiBusLock();
-    int n = f.read(raw, sizeof(raw));
+    int n = ::read(fd, s_getBuf, sizeof(s_getBuf));
     spiBusUnlock();
     if (n <= 0) break;
-    acc = crc32_run(acc, raw, n);
-    b64enc(raw, n, b64);
-    Serial.print("WT DATA ");
-    Serial.println(b64);
+    for (int off = 0; off < n; off += 384) {
+      int len = n - off < 384 ? n - off : 384;
+      acc = crc32_run(acc, s_getBuf + off, len);
+      b64enc(s_getBuf + off, len, b64);
+      Serial.print("WT DATA ");
+      Serial.println(b64);
+    }
     yield();
   }
-  spiBusLock(); f.close(); spiBusUnlock();
+  spiBusLock(); ::close(fd); spiBusUnlock();
   Serial.printf("WT END %08lX\n", (unsigned long)(acc ^ 0xFFFFFFFFu));
 }
 

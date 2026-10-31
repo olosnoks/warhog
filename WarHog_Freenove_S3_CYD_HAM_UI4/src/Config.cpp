@@ -1,4 +1,5 @@
 #include "Config.h"
+#include "SDUtils.h"   // SdReader
 #include "Globals.h"
 #include "StorageCompat.h"
 #include "SpiBusLock.h"   // CYD: SD + TFT share one SPI bus; serialize config writes in Core mode
@@ -196,7 +197,7 @@ bool loadConfigFromSD() {
 
   // Prefer new plain-text config
   if (SD.exists(CFG_PATH)) {
-    File f = SD.open(CFG_PATH, FILE_READ);
+    SdReader f(CFG_PATH);              // DMA-safe read (see SDUtils.h)
     if (!f) {
       Serial.println("[CFG] Failed to open /wardriver.cfg for read");
       return false;

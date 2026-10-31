@@ -1,4 +1,5 @@
 #include "MeshNode.h"
+#include "PsramAlloc.h"   // big rings live in PSRAM (internal DRAM is scarce)
 #include "Globals.h"
 #include "Config.h"
 #include "BiscuitCompat.h"   // present as a Biscuit Pro to the Biscuit Manager app while in Core mode
@@ -69,7 +70,7 @@ static uint32_t gLoopGt5    = 0;            // ticks exceeding 5 ms this window
 // the RX callback, consumer is this task; coreMirrorBuf producer is this task, consumer
 // is the loop. rt_* track the task's own cadence = the real RX-servicing jitter.
 struct CoreMirrorRec { char bssid[18], ssid[34], auth[12]; int16_t ch, rssi; };
-static CoreMirrorRec     coreMirrorBuf[64];
+static CoreMirrorRec*    coreMirrorBuf = psramCalloc<CoreMirrorRec>(64);
 static volatile uint8_t  coreMirrorHead = 0, coreMirrorTail = 0;
 static TaskHandle_t      gRxDrainTask = nullptr;
 static volatile bool     gRxDrainRun  = false;
@@ -337,7 +338,7 @@ struct CorTextSlot {
 static CorReqSlot          coreReqBuf[CORE_REQ_QUEUE];
 static volatile uint8_t    coreReqHead = 0, coreReqTail = 0;
 
-static CorTextSlot         coreTextBuf[CORE_TEXT_QUEUE];
+static CorTextSlot*        coreTextBuf = psramCalloc<CorTextSlot>(CORE_TEXT_QUEUE);
 static volatile uint8_t    coreTextHead = 0, coreTextTail = 0;
 
 // ================================================================
@@ -431,7 +432,7 @@ static uint32_t biscuitLastHbMs   = 0;
 static uint32_t biscuitLastReqMs  = 0;
 
 #define BISCUIT_FWD_QUEUE 96
-static char biscuitFwd[BISCUIT_FWD_QUEUE][JCMK_TEXT_MAX + 1];
+static char (*biscuitFwd)[JCMK_TEXT_MAX + 1] = psramCalloc<char[JCMK_TEXT_MAX + 1]>(BISCUIT_FWD_QUEUE);
 static int  biscuitFwdCount = 0;
 
 // ================================================================
@@ -563,7 +564,7 @@ static void coreOtaLoadOne(CoreOtaImage& im) {
   if (im.image) { heap_caps_free(im.image); im.image = nullptr; }
   im.size = 0; im.chunks = 0; im.failMsg[0] = 0;
   if (!SD.exists(im.path)) { strlcpy(im.failMsg, "NO IMAGE ON SD", sizeof(im.failMsg)); return; }
-  File f = SD.open(im.path, FILE_READ);
+  SdReader f(im.path);                 // DMA-safe read (see SDUtils.h)
   if (!f) { strlcpy(im.failMsg, "CANNOT OPEN IMAGE", sizeof(im.failMsg)); return; }
   uint32_t size = (uint32_t)f.size();
   if (size < 1024 || size > OTA_MAX_IMAGE) { f.close(); strlcpy(im.failMsg, "BAD IMAGE SIZE", sizeof(im.failMsg)); return; }
@@ -1270,7 +1271,7 @@ static void meshProfilesLoad() {
   // display flush / SD-log task and silently returns nothing.
   spiBusLock();
   if (!SD.exists(MESH_PROFILE_PATH)) { spiBusUnlock(); return; }
-  File f = SD.open(MESH_PROFILE_PATH, FILE_READ);
+  SdReader f(MESH_PROFILE_PATH);       // DMA-safe read (see SDUtils.h)
   if (!f) { spiBusUnlock(); return; }
   int slot = -1;
   while (f.available()) {
@@ -1424,7 +1425,7 @@ static void coreSendHeartbeatToAll() {
 // sightings, not set cardinality), which directly tracks "is the 2nd receiver
 // duplicating the 1st." Reported per group every 5 s as both/either + pct.
 struct PairSeen { uint32_t hash; uint32_t ms; };
-static PairSeen gPairSeen[CORE_MAX_NODES][16];
+static PairSeen (*gPairSeen)[16] = psramCalloc<PairSeen[16]>(CORE_MAX_NODES);
 static uint8_t  gPairSeenHead[CORE_MAX_NODES] = {};
 static uint32_t gPairBoth[CORE_MAX_GROUPS + 1]   = {};
 static uint32_t gPairEither[CORE_MAX_GROUPS + 1] = {};

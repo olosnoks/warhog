@@ -174,7 +174,7 @@ bool uploadFileToWigle(const String& path) {
     return false;
   }
 
-  File f = SD.open(path, FILE_READ);
+  SdReader f(path);                    // DMA-safe read (see SDUtils.h)
   if (!f) {
     Serial.println("[WiGLE] Failed to open file");
     uploadLastResult = "Open fail";
@@ -406,7 +406,7 @@ bool uploadFileToWdgwars(const String& path) {
     return false;
   }
 
-  File f = SD.open(path, FILE_READ);
+  SdReader f(path);                    // DMA-safe read (see SDUtils.h)
   if (!f) {
     Serial.println("[WDGWars] Failed to open file");
     return false;
@@ -690,7 +690,7 @@ bool uploadFileToWardrift(const String& path) {
     return false;
   }
 
-  File f = SD.open(path, FILE_READ);
+  SdReader f(path);                    // DMA-safe read (see SDUtils.h)
   if (!f) {
     Serial.println("[Wardrift] Failed to open file");
     uploadLastResult = "Open fail";
@@ -961,7 +961,7 @@ void wdgwarsDrainPendingJobs(uint32_t budgetMs) {
 // Returns true if the CSV contains at least one data row beyond the two
 // mandatory WiGLE header lines.  Opens, reads two lines, checks for more.
 static bool csvHasDataRows(const String& path) {
-  File f = SD.open(path, FILE_READ);
+  SdReader f(path);                    // DMA-safe read (see SDUtils.h)
   if (!f) return false;
 
   // Skip the two header lines

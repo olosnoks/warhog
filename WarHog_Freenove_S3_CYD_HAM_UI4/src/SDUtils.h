@@ -27,3 +27,38 @@ bool   moveToUploaded(const String& srcPath);
 // Move a file into /archived instead of deleting it. Used by the empty-CSV
 // auto-cleanup so the device never silently removes a file.
 bool   moveToArchived(const String& srcPath);
+
+// Read-only SD file that is safe to use whatever the heap looks like.
+//
+// Arduino File::read() goes through a 4 KiB stdio buffer. When internal RAM is
+// tight that buffer is allocated in PSRAM, the SD driver DMAs whole sectors
+// straight into it, and the CPU can read stale cached bytes: files come back
+// with chunks of whatever that memory held before. SdReader reads with POSIX
+// read() through one shared, 64-byte-aligned internal DMA buffer instead, so
+// every read is correct. It covers the File subset the firmware uses for
+// reading: if (!f), size(), read(buf, n), read(), available(),
+// readStringUntil(), close(). Writes through File are unaffected.
+class SdReader {
+ public:
+  explicit SdReader(const char* path);
+  explicit SdReader(const String& path) : SdReader(path.c_str()) {}
+  ~SdReader() { close(); }
+  SdReader(const SdReader&) = delete;
+  SdReader& operator=(const SdReader&) = delete;
+
+  explicit operator bool() const { return _fd >= 0; }
+  size_t size() const { return _size; }
+  int    available() const;
+  int    read(uint8_t* dst, size_t n);   // bytes read, 0 at end of file
+  int    read();                         // one byte, or -1 at end of file
+  String readStringUntil(char term);     // like Stream::readStringUntil (term dropped)
+  void   close();
+
+ private:
+  bool   fill();                         // refill _ra from the file
+  int    rawRead(uint8_t* dst, size_t n);
+  int      _fd = -1;
+  size_t   _size = 0, _pos = 0;          // file size, underlying fd offset
+  uint8_t  _ra[128];                     // small read-ahead for line/byte reads
+  uint16_t _raLen = 0, _raPos = 0;
+};

@@ -2,10 +2,11 @@
 #include "Globals.h"      // sdOk, logFile, FIRMWARE_VERSION, and the SD/FS backend
                           // (StorageCompat.h: SD on W550, SD_MMC-as-SD on the CYD)
 #include "Config.h"       // cfg, loadConfigFromSD()
-#include "SDUtils.h"      // normalizeSdPath(), sdLogFlushNow()
+#include "SDUtils.h"      // normalizeSdPath(), sdLogFlushNow(), SdReader
 #include "SpiBusLock.h"   // spiBusLock()/spiBusUnlock() (no-op unless PIG_FEAT_CORE_ISO)
 #include <string.h>
 #include <stdlib.h>
+#include "esp_heap_caps.h"   // heap snapshot in HELLO
 
 // ---- session + PUT state ----
 static bool     s_active   = false;
@@ -144,21 +145,20 @@ static void putData(const char* b64) {
 }
 
 // ---- GET ----
+// Reads through SdReader (SDUtils.h), not File::read(): File's stdio buffer can
+// sit in PSRAM, where SD DMA leaves the CPU reading stale bytes -- that was the
+// "corrupt wardriver.cfg" the Toolkit showed.
 static void cmdGetPath(const char* path) {
   if (!sdOk) { Serial.println("WT ERR nosd"); return; }
   sdLogFlushNow();                          // make the active log consistent on SD
-  spiBusLock();
-  File f = SD.open(path, FILE_READ);
-  spiBusUnlock();
-  if (!f || f.isDirectory()) { if (f) f.close(); Serial.println("WT ERR open"); return; }
+  SdReader f(path);
+  if (!f) { Serial.println("WT ERR open"); return; }
   Serial.printf("WT BEGIN %lu\n", (unsigned long)f.size());
-  uint8_t raw[384];
-  char    b64[520];
+  uint8_t  raw[384];                        // 384 B -> 512 base64 chars per WT DATA line
+  char     b64[520];
   uint32_t acc = 0xFFFFFFFFu;
   while (true) {
-    spiBusLock();
     int n = f.read(raw, sizeof(raw));
-    spiBusUnlock();
     if (n <= 0) break;
     acc = crc32_run(acc, raw, n);
     b64enc(raw, n, b64);
@@ -166,11 +166,10 @@ static void cmdGetPath(const char* path) {
     Serial.println(b64);
     yield();
   }
-  spiBusLock(); f.close(); spiBusUnlock();
+  f.close();
   Serial.printf("WT END %08lX\n", (unsigned long)(acc ^ 0xFFFFFFFFu));
 }
 
-// ---- LS ----
 static void cmdLs(const char* dir) {
   if (!sdOk) { Serial.println("WT ERR nosd"); return; }
   if (!*dir) dir = "/";
@@ -236,7 +235,16 @@ bool serialToolHandleLine(const char* line) {
     putCleanup(true);  // unexpected command cancels the transfer, then falls through
   }
 
-  if      (!strcmp(verb, "HELLO")) { s_active = true; Serial.printf("WT HELLO fw=%s model=%s proto=1\n", FIRMWARE_VERSION, cfg.board.c_str()); }
+  if      (!strcmp(verb, "HELLO")) {
+    s_active = true;
+    // Heap snapshot for diagnosis: free internal, largest internal block,
+    // largest internal DMA-capable block, free PSRAM (bytes).
+    Serial.printf("WT HELLO fw=%s model=%s proto=1 heap=%u big=%u dma=%u psram=%u\n", FIRMWARE_VERSION, cfg.board.c_str(),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  }
   else if (!strcmp(verb, "LS"))    cmdLs(args);
   else if (!strcmp(verb, "GET"))   cmdGetPath(args);
   else if (!strcmp(verb, "PUT"))   cmdPutFile(args);

@@ -7,6 +7,27 @@ the base firmware history.
 
 ## Unreleased
 
+### SD reads fixed + ~94 KB internal RAM freed (S3 CYD / W550)
+- **Fixed garbled SD reads.** Arduino `File::read()` goes through a 4 KB stdio
+  buffer that ended up in PSRAM when internal RAM was low. The SD driver then
+  DMA'd whole sectors into PSRAM and the CPU read stale cached bytes, so files
+  came back mixed with old data. The Toolkit showed this as a "corrupt"
+  `wardriver.cfg` that changed on every read. The data on the card was fine; only
+  reads were affected. A new `SdReader` (`SDUtils.h`) reads through one aligned
+  internal DMA buffer. It is now used for the Toolkit GET, config load, mesh
+  profiles and OTA images, CSV uploads (WiGLE, WDGWars, Wardrift), the empty-log
+  check, the `/archived` copy fallback, web UI downloads and the zip export,
+  and the CSV record viewer.
+- **Freed ~94 KB of internal RAM.** The mesh/Core and BLE bridge rings
+  (`coreTextBuf`, `biscuitFwd`, `ieTxRing`, `txRing`, `coreMirrorBuf`,
+  `cmdRing`, `ieCmdRing`, `gPairSeen`) now live in PSRAM via `psramCalloc()`
+  (`PsramAlloc.h`). Static internal RAM dropped from 178 KB to 84 KB, and free
+  internal heap at runtime went from ~7.6 KB to ~101 KB.
+- `WT HELLO` now also reports `heap`, `big`, `dma` and `psram`: free internal
+  RAM, the largest internal block, the largest DMA-capable block and free PSRAM.
+- **Other boards:** the Toolkit GET on the XIAO C5, T-Dongle C5 and Waveshare C6
+  now uses the same POSIX read into an internal DMA buffer.
+
 ### Piglet Toolkit (USB) + firmware attached to GitHub Releases
 - **Piglet Toolkit on the web flasher.** Connect over the same USB cable used for
   flashing to browse the SD card (list/download/upload/delete across `/logs`,
@@ -27,6 +48,16 @@ the base firmware history.
   the current folder (button or drag-and-drop, with a replace prompt), text preview
   for `.cfg`/`.csv`/`.txt`/`.log`/`.json` on double-click, and keyboard shortcuts
   (Enter, Del, Backspace, arrows).
+- **CSV log viewer.** Double-clicking a WiGLE `.csv` in the Toolkit opens a
+  Networks view: summary cards (networks, Wi-Fi / BLE, unique SSIDs, open Wi-Fi,
+  GPS-fix share, dates, strongest signal), then a searchable, sortable table
+  with security badges, signal bars, and locations that link to OpenStreetMap. An
+  All / Wi-Fi / BLE filter and a Text toggle are included. Unreadable lines are
+  skipped and counted. CSVs up to 10 MB can be previewed.
+- **Text file viewer.** `wardriver.cfg`, `.txt`, `.log` and other text files open
+  like a text editor: line numbers, wrapped long lines, dimmed `#` comments,
+  highlighted `[sections]` and `key=value` pairs. Non-text bytes are shown as
+  faint dots instead of replacement glyphs.
 - **Config editor: form only.** Removed the Raw tab; the form still edits the file
   text in place so comments and unknown keys survive. Save is now refused when the
   card's `wardriver.cfg` isn't readable text, so binary data can never be written

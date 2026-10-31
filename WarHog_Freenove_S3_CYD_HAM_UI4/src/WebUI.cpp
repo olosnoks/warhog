@@ -1093,9 +1093,17 @@ static void handleDownload() {
   if (!isAllowedDataPath(name)) { server.send(403, "text/plain", "Forbidden"); return; }
   if (!SD.exists(name)) { server.send(404, "text/plain", "Not found"); return; }
 
-  File f = SD.open(name, FILE_READ);
-  server.streamFile(f, "text/csv");
-  f.close();
+  SdReader f(name);                    // DMA-safe read (see SDUtils.h); streamFile() needs a File
+  if (!f) { server.send(500, "text/plain", "Open failed"); return; }
+  server.setContentLength(f.size());
+  server.send(200, "text/csv", "");
+  uint8_t buf[1024];
+  for (;;) {
+    int n = f.read(buf, sizeof(buf));
+    if (n <= 0) break;
+    server.sendContent((const char*)buf, (size_t)n);
+    yield();
+  }
 }
 
 static void handleDelete() {
@@ -1551,7 +1559,7 @@ static void handleDownloadAll() {
 
   bool first = true;
   for (const String& path : paths) {
-    File f = SD.open(path, FILE_READ); if (!f) continue;
+    SdReader f(path); if (!f) continue;   // DMA-safe read (see SDUtils.h)
     if (!first) {
       // Strip 2-line WiGLE header from non-first files
       if (f.available()) f.readStringUntil('\n');

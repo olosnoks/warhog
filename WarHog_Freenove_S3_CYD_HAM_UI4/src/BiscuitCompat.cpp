@@ -1,4 +1,5 @@
 #include "BiscuitCompat.h"
+#include "PsramAlloc.h"   // big rings live in PSRAM (internal DRAM is scarce)
 
 // Reported in DIS Software Revision (0x2A28). Not gate-critical; if the real
 // build version isn't visible in this translation unit, fall back gracefully.
@@ -37,7 +38,7 @@ static NimBLEServer*         bcServer     = nullptr;
 #define CMD_SLOT_LEN 180
 #define CMD_RING     16
 struct CmdSlot { char line[CMD_SLOT_LEN]; };
-static CmdSlot           cmdRing[CMD_RING];
+static CmdSlot*          cmdRing = psramCalloc<CmdSlot>(CMD_RING);
 static volatile uint8_t  cmdHead = 0;   // drained by tick
 static volatile uint8_t  cmdTail = 0;   // filled by write cb
 
@@ -50,7 +51,7 @@ static volatile uint8_t  cmdTail = 0;   // filled by write cb
 #define TX_RING      96          // 96*128 = ~12 KB static (vs original 64*150 = 9.6 KB)
 #define TX_PER_TICK  48          // notifies per tick; drains the ring quickly
 struct TxSlot { char line[TX_SLOT_LEN]; };
-static TxSlot            txRing[TX_RING];
+static TxSlot*           txRing = psramCalloc<TxSlot>(TX_RING);
 static volatile uint16_t txHead = 0;
 static volatile uint16_t txTail = 0;
 static volatile bool     respSubscribed = false;   // app enabled Response notifications

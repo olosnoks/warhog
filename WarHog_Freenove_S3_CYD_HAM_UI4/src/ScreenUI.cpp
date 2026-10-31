@@ -1911,7 +1911,7 @@ static bool parseCsv(const String& line, String* fields, int maxFields) {
 bool ScreenUI::readCsvRecord(const String& path, size_t target, String& ssid, String& bssid,
                              String& auth, String& firstSeen, int& channel, int& rssi,
                              double& lat, double& lon) const {
-  File file = SD.open(path, FILE_READ);
+  SdReader file(path);                 // DMA-safe read (see SDUtils.h)
   if (!file) return false;
 
   file.readStringUntil('\n');

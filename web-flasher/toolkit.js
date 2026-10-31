@@ -285,6 +285,7 @@
   // drag-and-drop upload into the current folder, and a text preview.
   const TEXT_EXT = ['cfg', 'csv', 'txt', 'log', 'json', 'md', 'ini', 'conf'];
   const PREVIEW_MAX = 256 * 1024;
+  const CSV_PREVIEW_MAX = 10 * 1024 * 1024;   // CSV logs are capped at 9 MiB on the device
   let cwd = '/';
   let entries = [];             // [{ path, name, dir, size }]
   let view = [];                // entries in display order
@@ -503,19 +504,206 @@
     try {
       const bytes = await fetchFile(it);
       pvBytes = bytes; pvName = it.name;
+      const text = new TextDecoder().decode(bytes);
       $('tkPvTitle').textContent = it.path + '  (' + fmtSize(bytes.length) + ')';
-      $('tkPvBody').textContent = new TextDecoder().decode(bytes);
+      renderTextView(text, extOf(it.name));
+      const csv = extOf(it.name) === 'csv' ? parseWigle(text) : null;
+      $('tkPvMode').style.display = csv ? '' : 'none';
+      if (csv) { csvData = csv; csvQ = ''; csvType = ''; csvSort = 'seen'; csvDir = -1; $('tkCsvQ').value = ''; renderCsvCards(); renderCsvTable(); }
+      setPvMode(csv ? 'table' : 'text');
       $('tkPreview').style.display = '';
       $('tkStatus').textContent = 'previewing ' + it.name;
     } catch (e) { log('GET failed: ' + e.message); $('tkStatus').textContent = 'preview failed: ' + e.message; }
     finally { setBusy(false); }
   }
-  function closePreview() { $('tkPreview').style.display = 'none'; pvBytes = null; $('tkFiles').focus(); }
+  function closePreview() { $('tkPreview').style.display = 'none'; pvBytes = null; csvData = null; $('tkCsvT').innerHTML = ''; $('tkFiles').focus(); }
+
+  // ---------- Text viewer: line numbers, wrapping, key=value / comment colours ----------
+  const TEXT_LINES_MAX = 20000;   // beyond this, plain <pre> (big logs)
+  const escHtml = (t) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  // Escape, and show bytes that aren't text (NUL, control chars, U+FFFD) as faint dots.
+  const showText = (t) => escHtml(t).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]+/g, (m) => '<b class="x">' + '·'.repeat(m.length) + '</b>');
+  function renderTextView(text, ext) {
+    const body = $('tkPvBody');
+    const lines = text.replace(/\r\n?/g, '\n').split('\n');
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+    if (lines.length > TEXT_LINES_MAX) { body.classList.remove('lines'); body.textContent = text; return; }
+    const kv = ['cfg', 'ini', 'conf', 'txt'].includes(ext);
+    const out = lines.map((ln, n) => {
+      let h;
+      if (kv && /^\s*[#;]/.test(ln)) h = '<b class="c">' + showText(ln) + '</b>';
+      else if (kv && /^\s*\[[^\]]+\]\s*$/.test(ln)) h = '<b class="s">' + showText(ln) + '</b>';
+      else if (kv && /^\s*[\w.\-]+\s*=/.test(ln)) {
+        const i = ln.indexOf('=');
+        h = '<b class="k">' + showText(ln.slice(0, i)) + '</b><b class="e">=</b><b class="v">' + showText(ln.slice(i + 1)) + '</b>';
+      } else h = showText(ln);
+      return '<div class="ln"><i>' + (n + 1) + '</i><span>' + h + '</span></div>';
+    });
+    body.classList.add('lines');
+    body.innerHTML = out.join('');
+  }
+
+  // ---------- CSV (WiGLE log) viewer ----------
+  let csvData = null, csvQ = '', csvType = '', csvSort = 'seen', csvDir = -1;
+  const CSV_ROWS_MAX = 2000;     // rows drawn at once; filter to narrow down
+
+  function setPvMode(m) {
+    const table = m === 'table' && csvData;
+    $('tkCsv').style.display = table ? '' : 'none';
+    $('tkPvBody').style.display = table ? 'none' : '';
+    $('tkPreview').querySelector('.tkModalBox').classList.toggle('wide', !!table);
+    $('tkPvMode').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.m === (table ? 'table' : 'text')));
+  }
+
+  function splitCsvLine(line) {
+    const out = []; let cur = '', q = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (q) {
+        if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+        else cur += c;
+      } else if (c === '"') q = true;
+      else if (c === ',') { out.push(cur); cur = ''; }
+      else cur += c;
+    }
+    out.push(cur);
+    return out;
+  }
+
+  // Parse a WiGLE CSV. Lines that aren't a clean row (bad MAC, control bytes,
+  // short) are counted as unreadable rather than shown.
+  function parseWigle(text) {
+    const lines = text.split(/\r?\n/);
+    let i = 0, preHeader = '';
+    if (lines[0] && lines[0].startsWith('WigleWifi')) preHeader = lines[i++];
+    if (!lines[i] || !/^MAC,/i.test(lines[i])) return null;          // not a WiGLE log
+    const cols = splitCsvLine(lines[i++]).map((c) => c.trim());
+    const ix = (n) => cols.findIndex((c) => c.toLowerCase() === n.toLowerCase());
+    const C = { mac: ix('MAC'), ssid: ix('SSID'), auth: ix('AuthMode'), seen: ix('FirstSeen'), ch: ix('Channel'),
+                freq: ix('Frequency'), rssi: ix('RSSI'), lat: ix('CurrentLatitude'), lon: ix('CurrentLongitude'), type: ix('Type') };
+    const MAC = /^[0-9A-F]{2}(:[0-9A-F]{2}){5}$/i, BAD = /[\x00-\x08\x0e-\x1f\x7f�]/;
+    const rows = []; let bad = 0;
+    for (; i < lines.length; i++) {
+      const ln = lines[i];
+      if (!ln.trim()) continue;
+      if (BAD.test(ln)) { bad++; continue; }
+      const f = splitCsvLine(ln);
+      if (f.length < cols.length - 1 || !MAC.test(f[C.mac] || '')) { bad++; continue; }
+      const num = (k) => { const v = parseFloat(f[C[k]]); return isFinite(v) ? v : null; };
+      rows.push({ mac: f[C.mac].toUpperCase(), ssid: f[C.ssid] || '', auth: f[C.auth] || '', seen: f[C.seen] || '',
+                  ch: num('ch'), freq: num('freq'), rssi: num('rssi'), lat: num('lat'), lon: num('lon'),
+                  type: (f[C.type] || '').toUpperCase() || 'WIFI' });
+    }
+    if (!rows.length) return null;                                     // nothing usable: show as text
+    const dev = (preHeader.match(/device=([^,]+)/) || [])[1] || '';
+    return { rows, bad, dev };
+  }
+
+  function card(val, label, warn) {
+    const d = document.createElement('div'); d.className = 'tkCsvCard' + (warn ? ' warn' : '');
+    const b = document.createElement('b'); b.textContent = val; d.appendChild(b);
+    const s = document.createElement('span'); s.textContent = label; d.appendChild(s);
+    return d;
+  }
+
+  function renderCsvCards() {
+    const { rows, bad } = csvData, box = $('tkCsvCards');
+    box.innerHTML = '';
+    const wifi = rows.filter((r) => r.type === 'WIFI'), ble = rows.length - wifi.length;
+    const open = wifi.filter((r) => /^\[?(open|none)?\]?$/i.test(r.auth.replace(/\[ESS\]/i, '').trim())).length;
+    const ssids = new Set(wifi.map((r) => r.ssid).filter(Boolean)).size;
+    const gps = rows.filter((r) => r.lat && r.lon).length;
+    const times = rows.map((r) => r.seen).filter((t) => /^\d{4}-/.test(t)).sort();
+    const best = rows.reduce((m, r) => (r.rssi != null && (m == null || r.rssi > m.rssi) ? r : m), null);
+    box.append(card(rows.length.toLocaleString(), 'networks logged'),
+               card(wifi.length.toLocaleString(), 'Wi-Fi'),
+               card(ble.toLocaleString(), 'BLE'),
+               card(ssids.toLocaleString(), 'unique SSIDs'),
+               card(open.toLocaleString(), 'open Wi-Fi'),
+               card(rows.length ? Math.round(100 * gps / rows.length) + '%' : '—', 'with GPS fix'));
+    if (times.length) {
+      const t0 = times[0], t1 = times[times.length - 1];
+      box.append(t0.slice(0, 10) === t1.slice(0, 10)
+        ? card(t0.slice(11, 16) + ' → ' + t1.slice(11, 16), 'on ' + t0.slice(0, 10))
+        : card(t0.slice(5, 10) + ' → ' + t1.slice(5, 10), 'dates seen (' + t0.slice(0, 4) + ')'));
+    }
+    if (best) box.append(card(best.rssi + ' dBm', 'strongest: ' + (best.ssid || best.mac)));
+    if (bad) box.append(card(bad.toLocaleString(), 'unreadable lines skipped', true));
+  }
+
+  const CSV_COLS = [
+    ['type', 'Type'], ['ssid', 'SSID / name'], ['mac', 'MAC'], ['auth', 'Security'], ['ch', 'Ch', 'num'],
+    ['rssi', 'Signal', 'num'], ['seen', 'First seen'], ['loc', 'Location'],
+  ];
+
+  function renderCsvTable() {
+    const q = csvQ.toLowerCase();
+    let rows = csvData.rows.filter((r) => (!csvType || r.type === csvType) &&
+      (!q || (r.ssid + ' ' + r.mac + ' ' + r.auth + ' ' + (r.ch ?? '') + ' ' + r.seen).toLowerCase().includes(q)));
+    const k = csvSort, d = csvDir;
+    rows.sort((a, b) => {
+      let x = a[k], y = b[k];
+      if (k === 'loc') { x = a.lat; y = b.lat; }
+      if (x == null || x === '') return 1; if (y == null || y === '') return -1;
+      return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true, sensitivity: 'base' })) * d;
+    });
+    $('tkCsvCnt').textContent = rows.length === csvData.rows.length ? rows.length.toLocaleString() + ' rows'
+      : rows.length.toLocaleString() + ' of ' + csvData.rows.length.toLocaleString() + ' rows';
+    const t = $('tkCsvT');
+    t.innerHTML = '';
+    const hr = document.createElement('tr');
+    CSV_COLS.forEach(([key, label, cls]) => {
+      const th = document.createElement('th');
+      th.textContent = label + (csvSort === key ? (csvDir > 0 ? ' ▴' : ' ▾') : '');
+      if (cls) th.className = cls;
+      th.onclick = () => { if (csvSort === key) csvDir = -csvDir; else { csvSort = key; csvDir = key === 'rssi' || key === 'seen' ? -1 : 1; } renderCsvTable(); };
+      hr.appendChild(th);
+    });
+    const thead = document.createElement('thead'); thead.appendChild(hr); t.appendChild(thead);
+    const tb = document.createElement('tbody');
+    const td = (text, cls) => { const c = document.createElement('td'); if (cls) c.className = cls; c.textContent = text; return c; };
+    rows.slice(0, CSV_ROWS_MAX).forEach((r) => {
+      const tr = document.createElement('tr');
+      const ty = document.createElement('td'); ty.innerHTML = '<span class="tkBadge ' + (r.type === 'BLE' ? 'ble">BLE' : 'wifi">Wi-Fi') + '</span>';
+      const sec = r.auth.replace(/\[ESS\]/ig, '').replace(/^\[|\]$/g, '').trim();
+      const au = document.createElement('td');
+      if (r.type !== 'BLE') {
+        const sp = document.createElement('span');
+        const isOpen = !sec || /^open$/i.test(sec), isWep = /wep/i.test(sec);
+        sp.className = 'tkBadge' + (isOpen ? ' open' : isWep ? ' wep' : '');
+        sp.textContent = isOpen ? 'Open' : sec.replace(/\]\[/g, ' ');
+        au.appendChild(sp);
+      }
+      const sg = document.createElement('td'); sg.className = 'num';
+      if (r.rssi != null) {
+        const lv = r.rssi >= -55 ? 4 : r.rssi >= -67 ? 3 : r.rssi >= -78 ? 2 : 1;
+        sg.innerHTML = '<span class="tkSig">' + [1, 2, 3, 4].map((n) => '<i' + (n <= lv ? ' class="on"' : '') + '></i>').join('') + '</span>';
+        sg.appendChild(document.createTextNode(r.rssi + ' dBm'));
+      }
+      const loc = document.createElement('td'); loc.className = 'mono';
+      if (r.lat && r.lon) {
+        const a = document.createElement('a');
+        a.href = 'https://www.openstreetmap.org/?mlat=' + r.lat + '&mlon=' + r.lon + '#map=18/' + r.lat + '/' + r.lon;
+        a.target = '_blank'; a.rel = 'noopener'; a.textContent = r.lat.toFixed(5) + ', ' + r.lon.toFixed(5);
+        loc.appendChild(a);
+      } else loc.textContent = '—';
+      tr.append(ty, td(r.ssid || (r.type === 'BLE' ? '(no name)' : '(hidden)'), 'ssid' + (r.ssid ? '' : ' hid')),
+                td(r.mac, 'mono'), au, td(r.ch ?? '', 'num'), sg, td(r.seen, 'mono'), loc);
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    if (rows.length > CSV_ROWS_MAX) {
+      const more = document.createElement('caption'); more.style.captionSide = 'bottom'; more.className = 'tkCsvMore';
+      more.textContent = 'Showing the first ' + CSV_ROWS_MAX.toLocaleString() + ' rows. Use the filter to narrow it down.';
+      t.appendChild(more);
+    }
+  }
 
   function openItem(it) {
     if (busy) return;
     if (it.dir) { navigate(it.path); return; }
-    if (TEXT_EXT.includes(extOf(it.name)) && it.size <= PREVIEW_MAX) { previewItem(it); return; }
+    const max = extOf(it.name) === 'csv' ? CSV_PREVIEW_MAX : PREVIEW_MAX;
+    if (TEXT_EXT.includes(extOf(it.name)) && it.size <= max) { previewItem(it); return; }
     downloadItems([it]);
   }
 
@@ -594,6 +782,13 @@
     list.addEventListener('dragleave', () => list.classList.remove('drop'));
     list.addEventListener('drop', (ev) => { ev.preventDefault(); list.classList.remove('drop'); if (connected && !busy) uploadFiles(ev.dataTransfer.files); });
     $('tkPvClose').onclick = closePreview;
+    $('tkPvMode').onclick = (ev) => { const m = ev.target.dataset && ev.target.dataset.m; if (m) setPvMode(m); };
+    let qTimer = 0;
+    $('tkCsvQ').oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(() => { csvQ = $('tkCsvQ').value.trim(); if (csvData) renderCsvTable(); }, 120); };
+    $('tkCsvType').onclick = (ev) => {
+      const b = ev.target.closest('button'); if (!b || !csvData) return;
+      csvType = b.dataset.t; $('tkCsvType').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b)); renderCsvTable();
+    };
     $('tkPvDl').onclick = () => { if (pvBytes) saveBytes(pvName, pvBytes); };
     $('tkPreview').addEventListener('click', (ev) => { if (ev.target === $('tkPreview')) closePreview(); });
     document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && $('tkPreview').style.display === '') closePreview(); });

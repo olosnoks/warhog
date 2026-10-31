@@ -220,9 +220,57 @@
   @media (max-width:560px){.tkFr{grid-template-columns:minmax(0,1fr) 72px}.tkFr .ty{display:none}.tkTb .tkTbL{display:none}.tkTb:not(.ico){width:28px;padding:0;justify-content:center}}
   .tkModal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
   .tkModalBox{background:var(--card);border:1px solid var(--border);border-radius:12px;width:min(860px,100%);max-height:85vh;display:flex;flex-direction:column}
+  .tkModalBox.wide{width:min(1180px,100%);height:85vh}
+  .tkSeg{display:inline-flex;border:1px solid var(--inputBorder);border-radius:6px;overflow:hidden}
+  .tkSeg button{appearance:none;border:0;background:transparent;color:var(--muted);padding:4px 11px;font:600 11.5px system-ui,sans-serif;cursor:pointer}
+  .tkSeg button+button{border-left:1px solid var(--inputBorder)}
+  .tkSeg button.on{background:var(--accentDim);color:var(--text)}
+  #tkCsv{flex:1;display:flex;flex-direction:column;min-height:0;font:13px system-ui,sans-serif}
+  .tkCsvCards{display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:8px;padding:12px 12px 4px}
+  .tkCsvCard{background:var(--input);border:1px solid var(--border);border-radius:8px;padding:8px 11px;min-width:0}
+  .tkCsvCard b{display:block;font-size:17px;font-weight:650;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tkCsvCard span{font-size:11px;color:var(--muted)}
+  .tkCsvCard.warn{border-color:rgba(255,85,85,.45)} .tkCsvCard.warn b{color:var(--danger)}
+  .tkCsvBar{display:flex;gap:8px;align-items:center;padding:8px 12px;flex-wrap:wrap}
+  .tkCsvBar input{flex:1;min-width:160px;height:28px;padding:0 10px;border-radius:6px;border:1px solid var(--inputBorder);background:var(--input);color:var(--text);font:13px system-ui,sans-serif}
+  .tkCsvBar .cnt{font-size:11.5px;color:var(--muted);white-space:nowrap}
+  .tkCsvWrap{flex:1;overflow:auto;min-height:0;border-top:1px solid var(--border)}
+  .tkCsvT{width:100%;border-collapse:collapse;font-size:12.5px}
+  .tkCsvT th{position:sticky;top:0;background:var(--card);color:var(--muted);font-size:11.5px;font-weight:600;text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);cursor:pointer;white-space:nowrap;user-select:none}
+  .tkCsvT th:hover{color:var(--text)}
+  .tkCsvT td{padding:5px 10px;white-space:nowrap;border-bottom:1px solid rgba(68,71,90,.4)}
+  .tkCsvT tr:nth-child(even) td{background:rgba(255,255,255,.02)}
+  .tkCsvT tr:hover td{background:rgba(255,255,255,.05)}
+  .tkCsvT .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--muted)}
+  .tkCsvT .num{text-align:right;font-variant-numeric:tabular-nums}
+  .tkCsvT .hid{color:var(--muted);font-style:italic}
+  .tkCsvT .ssid{max-width:260px;overflow:hidden;text-overflow:ellipsis}
+  .tkBadge{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:600;background:var(--input);border:1px solid var(--border)}
+  .tkBadge.open{color:#ff7b72;border-color:rgba(255,123,114,.45)} .tkBadge.wep{color:#e3b341;border-color:rgba(227,179,65,.45)}
+  .tkBadge.ble{color:#58a6ff;border-color:rgba(88,166,255,.45)} .tkBadge.wifi{color:#3fb950;border-color:rgba(63,185,80,.4)}
+  .tkSig{display:inline-flex;gap:1.5px;align-items:flex-end;height:11px;margin-right:6px;vertical-align:-1px}
+  .tkSig i{width:3px;background:var(--border);border-radius:1px}
+  .tkSig i:nth-child(1){height:3px}.tkSig i:nth-child(2){height:6px}.tkSig i:nth-child(3){height:8px}.tkSig i:nth-child(4){height:11px}
+  .tkSig i.on{background:#3fb950}
+  .tkCsvMore{padding:10px;text-align:center;color:var(--muted);font-size:12px}
+  .tkCsvT a{color:var(--accent)}
+  .tkModalHead .tkMini{white-space:nowrap}
+  @media (max-width:640px){.tkModalHead{flex-wrap:wrap}.tkModalHead b{flex-basis:100%}.tkModalHead .tkFbGrow{display:none}}
   .tkModalHead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;overflow:hidden}
   .tkModalHead b{font-family:ui-monospace,Menlo,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #tkPvBody{margin:0;border:0;border-radius:0 0 12px 12px;overflow:auto;flex:1;white-space:pre;font-size:12px}
+  #tkPvBody.lines{white-space:normal;padding:8px 0;font:12.5px/1.55 ui-monospace,Menlo,Consolas,monospace;counter-reset:none}
+  #tkPvBody.lines .ln{display:grid;grid-template-columns:48px minmax(0,1fr);gap:12px;padding:0 14px 0 0}
+  #tkPvBody.lines .ln:hover{background:rgba(255,255,255,.03)}
+  #tkPvBody.lines .ln i{font-style:normal;text-align:right;color:var(--muted);opacity:.6;user-select:none}
+  #tkPvBody.lines .ln span{white-space:pre-wrap;overflow-wrap:anywhere;min-height:1.55em}
+  #tkPvBody.lines b{font-weight:inherit}
+  #tkPvBody.lines .c{color:#6272a4;font-style:italic}
+  #tkPvBody.lines .k{color:#8be9fd}
+  #tkPvBody.lines .e{color:var(--muted)}
+  #tkPvBody.lines .v{color:#f1fa8c}
+  #tkPvBody.lines .s{color:#ff79c6;font-weight:600}
+  #tkPvBody.lines .x{color:var(--danger);opacity:.55}
   #tkLog{margin-top:10px;max-height:120px;overflow:auto;background:var(--input);border:1px solid var(--border);border-radius:7px;padding:8px;font:11px ui-monospace,Menlo,Consolas,monospace;color:var(--muted);white-space:pre-wrap}
 
   footer{margin-top:20px;padding-top:12px;border-top:1px solid var(--border);color:var(--muted);font-size:12px;display:flex;gap:14px;flex-wrap:wrap;justify-content:space-between}
@@ -480,8 +528,18 @@ esptool --chip esp32c5 --no-stub write-flash 0x0 TDongleC5_Piglet.ino.merged.bin
           <div class="tkModalHead">
             <b id="tkPvTitle"></b>
             <span class="tkFbGrow"></span>
+            <span class="tkSeg" id="tkPvMode" style="display:none"><button type="button" data-m="table" class="on">Networks</button><button type="button" data-m="text">Text</button></span>
             <button class="tkMini" id="tkPvDl">&#8681; Download</button>
             <button class="tkMini" id="tkPvClose" title="Close (Esc)">&times;</button>
+          </div>
+          <div id="tkCsv" style="display:none">
+            <div class="tkCsvCards" id="tkCsvCards"></div>
+            <div class="tkCsvBar">
+              <input type="search" id="tkCsvQ" placeholder="Filter by SSID, MAC, auth, channel&hellip;" aria-label="Filter networks">
+              <span class="tkSeg" id="tkCsvType"><button type="button" data-t="" class="on">All</button><button type="button" data-t="WIFI">Wi-Fi</button><button type="button" data-t="BLE">BLE</button></span>
+              <span class="cnt" id="tkCsvCnt"></span>
+            </div>
+            <div class="tkCsvWrap"><table class="tkCsvT" id="tkCsvT"></table></div>
           </div>
           <pre id="tkPvBody"></pre>
         </div>

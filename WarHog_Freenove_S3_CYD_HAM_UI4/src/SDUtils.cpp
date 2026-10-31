@@ -1,6 +1,11 @@
 #include "SDUtils.h"
 #include "Globals.h"
 #include "esp_heap_caps.h"   // heap_caps_malloc — batch buffer in PSRAM when present
+#include "esp_attr.h"        // DMA_ATTR (SdReader bounce buffer)
+#include "SpiBusLock.h"
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 // ---- Path helpers ----
 
@@ -92,7 +97,7 @@ static bool moveToFolder(const String& srcPath, const char* destDir) {
 
   Serial.println("[SD] ERROR: SD.rename failed");
   // Last resort: copy + delete (some SD libs are picky)
-  File in = SD.open(srcPath, FILE_READ);
+  SdReader in(srcPath);                // DMA-safe read (see SdReader)
   if (!in) { Serial.println("[SD] copy fallback: open src failed"); return false; }
 
   File out = SD.open(dstPath, FILE_WRITE);
@@ -457,4 +462,105 @@ void appendWigleBleRow(const String& mac, const String& name, int rssi,
   line += ",,BLE";                    // RCOIs (empty), MfgrId (empty), Type
 
   writeLogLine(line);
+}
+
+// ---- SdReader: DMA-safe reads (see SDUtils.h) ----
+
+static DMA_ATTR uint8_t s_sdBounce[2048] __attribute__((aligned(64)));   // 4 sectors
+
+static SemaphoreHandle_t sdBounceMutex() {
+  static SemaphoreHandle_t m = xSemaphoreCreateMutex();
+  return m;
+}
+
+SdReader::SdReader(const char* path) {
+  if (!sdOk || !path || !*path) return;
+  String full = String(SD.mountpoint()) + (path[0] == '/' ? "" : "/") + path;
+  spiBusLock();
+  int fd = ::open(full.c_str(), O_RDONLY);
+  struct stat st;
+  if (fd >= 0 && (fstat(fd, &st) != 0 || S_ISDIR(st.st_mode))) { ::close(fd); fd = -1; }
+  spiBusUnlock();
+  if (fd < 0) return;
+  _fd = fd;
+  _size = (size_t)st.st_size;
+}
+
+void SdReader::close() {
+  if (_fd < 0) return;
+  spiBusLock();
+  ::close(_fd);
+  spiBusUnlock();
+  _fd = -1;
+  _raLen = _raPos = 0;
+}
+
+int SdReader::available() const {
+  if (_fd < 0) return 0;
+  return (int)((_size > _pos ? _size - _pos : 0) + (size_t)(_raLen - _raPos));
+}
+
+int SdReader::rawRead(uint8_t* dst, size_t n) {
+  size_t got = 0;
+  while (got < n) {
+    size_t want = n - got;
+    if (want > sizeof(s_sdBounce)) want = sizeof(s_sdBounce);
+    xSemaphoreTake(sdBounceMutex(), portMAX_DELAY);
+    spiBusLock();
+    int r = ::read(_fd, s_sdBounce, want);
+    if (r > 0) memcpy(dst + got, s_sdBounce, (size_t)r);
+    spiBusUnlock();
+    xSemaphoreGive(sdBounceMutex());
+    if (r <= 0) break;
+    got  += (size_t)r;
+    _pos += (size_t)r;
+    if ((size_t)r < want) break;   // end of file
+  }
+  return (int)got;
+}
+
+bool SdReader::fill() {
+  _raPos = 0;
+  int r = rawRead(_ra, sizeof(_ra));
+  _raLen = r > 0 ? (uint16_t)r : 0;
+  return _raLen > 0;
+}
+
+int SdReader::read(uint8_t* dst, size_t n) {
+  if (_fd < 0 || !dst) return 0;
+  size_t got = 0;
+  if (_raPos < _raLen) {                          // drain read-ahead first
+    size_t k = _raLen - _raPos;
+    if (k > n) k = n;
+    memcpy(dst, _ra + _raPos, k);
+    _raPos += (uint16_t)k;
+    got = k;
+  }
+  if (got < n) got += (size_t)rawRead(dst + got, n - got);
+  return (int)got;
+}
+
+int SdReader::read() {
+  if (_fd < 0) return -1;
+  if (_raPos >= _raLen && !fill()) return -1;
+  return _ra[_raPos++];
+}
+
+String SdReader::readStringUntil(char term) {
+  String out;
+  if (_fd < 0) return out;
+  while (true) {
+    if (_raPos >= _raLen && !fill()) break;
+    const uint8_t* start = _ra + _raPos;
+    size_t len = _raLen - _raPos;
+    const uint8_t* hit = (const uint8_t*)memchr(start, term, len);
+    if (hit) {
+      out.concat((const char*)start, (unsigned)(hit - start));
+      _raPos += (uint16_t)(hit - start + 1);
+      break;
+    }
+    out.concat((const char*)start, (unsigned)len);
+    _raPos = _raLen;
+  }
+  return out;
 }
