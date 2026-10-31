@@ -51,6 +51,12 @@ copy drifts from its `scheduler/` source. Run it locally before pushing:
 bash scripts/check-dropins.sh
 ```
 
+## Mesh scale sign-off (hardware)
+Host tests can't prove the Core holds up under a full roster. `scripts/mesh_signoff.py`
+reads a Core's serial output (live, without rebooting it, or a saved `--log`) and grades
+it against the DESIGN §13 targets at 12 nodes; it needs `pyserial` for live capture. See
+[Adaptive Scheduler → 12-node scale sign-off](Adaptive-Scheduler.md#12-node-scale-sign-off).
+
 ## Line endings
 The repo is **LF-only** (`.gitattributes`: `* text=auto eol=lf`, with image/STL/`.bin`/zip
 marked `binary`). Commit source as LF; on Windows, Git normalizes checkouts so you won't see

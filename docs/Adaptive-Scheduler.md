@@ -78,7 +78,8 @@ Acceptance target (DESIGN §13): **0 RX deadline misses, RX jitter < 5 ms, at �
 - **RAM note:** Step 5 only fit after reclaiming ~32 KB of internal RAM — the Marauder
   PCAP double-buffer is now allocated lazily (only during capture) instead of reserved as
   static `.bss`. Internal heap, not threading, was the binding constraint on the S3 Core.
-- Instrumentation: the `[CORE-ISO]` line (`rt_us`, `rx_drop`, `txtq_max`, `loop_us`).
+- Instrumentation: the `[CORE-ISO]` line (`rt_us`, `rx_drop`, `txtq_max`, `loop_us`,
+  `nodes`, and `heap`/`heap_min` = free / lowest-ever-free internal RAM).
 - On the single-core C3 there's no affinity → priority-only fallback.
 
 ## Phase 5 — WarHog dual-node pair scheduler (`PIG_FEAT_PAIR_SCHED`)
@@ -119,3 +120,40 @@ the second receiver should *widen* instantaneous coverage, not duplicate the fir
 Use the replay harness (`tests/replay.cpp`, `pig_replay.h`) to A/B transmit models on an
 identical captured scan corpus rather than live RF. The regression guard: any build that
 cuts single-node unique/min > 5 % or introduces an RX deadline miss fails and reverts.
+
+## 12-node scale sign-off
+Phases 1–5 are bench-validated at 4 nodes. The formal acceptance (DESIGN §13) is at the
+user's real ceiling of **12 nodes** (`CORE_MAX_NODES = 12`; a 13th logs
+`[CORE] Max nodes reached` and is turned away). `scripts/mesh_signoff.py` grades a run.
+
+**Setup:** an S3 Core (freenove or guition) on current firmware, Core mode, GPS fix if
+available; 12 C5 nodes on current firmware, grouped into sub-clusters to match the rig (6
+antennas × 2 nodes = 6 groups of 2), so the multi-group PAIR_SCHED phase offset is exercised.
+
+**Procedure:**
+1. Connect the Core over USB and start the capture **before** powering the nodes, so the
+   heap-per-node curve is recorded from 0:
+   `python scripts/mesh_signoff.py --port COM7 --minutes 25 --save signoff.log`
+   (the port is opened without DTR/RTS, so the Core is not rebooted.)
+2. Power the nodes one at a time (~10 s apart), then leave all 12 scanning for **≥10 min**.
+   Moving the rig (drive or walk) gives a realistic record burst; stationary is the floor.
+3. Optional stress: power-cycle one node mid-run (join/timeout path) and run an upload
+   from the web UI (`moveToFolder` contending with `tStore` for the SD lock).
+4. Re-grade or share a capture later with `--log signoff.log`.
+
+**Pass criteria** (script exit 0):
+
+| Check | Source | Target |
+|---|---|---|
+| Time at target | `[CORE-ISO] nodes=` | ≥ 10 min at 12 nodes |
+| RX deadline misses | `rx_drop txt=/req=` | no increase |
+| SD store drops | `drops=` | no increase |
+| RX jitter | `rt_us max=` | p95 < 5 ms |
+| Stability | boot banner / `abort()` / Guru Meditation | none mid-run |
+| SD memory | `err=0x101` | none |
+| Internal heap | `heap_min=` | ≥ 1024 B (`--heap-floor`) |
+
+Also reported, for judgement rather than pass/fail: flapping nodes (joined >2×), reassign
+count, SD queue peak, `[PAIR]` overlap per group (lower = more complementary), and free
+heap per node count. Heap shrank ~200 B/node on the 4-node bench (~3.7 KB at 2 nodes); if
+it trends toward zero before 12, free internal RAM before trusting the result.

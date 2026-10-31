@@ -2145,17 +2145,22 @@ void coreModeTick() {
 
 #if PIG_FEAT_CORE_ISO
   // Phase 4 Step 1 instrumentation: watch the core-0 SD queue depth + drops.
+  // heap/heap_min = free / lowest-ever-free INTERNAL RAM — the binding constraint
+  // as the roster grows (scripts/mesh_signoff.py tracks it toward 12 nodes).
   static uint32_t coreIsoLogMs = 0;
   if (now - coreIsoLogMs >= 5000) {
     coreIsoLogMs = now;
     Serial.printf("[CORE-ISO] SD store q: depth=%u drops=%lu | rx_drop txt=%lu req=%lu txtq_max=%u"
-                  " | rt_us max=%lu gt5ms=%lu | loop_us max=%lu gt5ms=%lu | nodes=%u\n",
+                  " | rt_us max=%lu gt5ms=%lu | loop_us max=%lu gt5ms=%lu | nodes=%u"
+                  " | heap=%u heap_min=%u\n",
                   gLogQ ? (unsigned)uxQueueMessagesWaiting(gLogQ) : 0u,
                   (unsigned long)gStoreDrops,
                   (unsigned long)gRxTextDrops, (unsigned long)gRxReqDrops, (unsigned)gRxQMax,
                   (unsigned long)gRtMaxUs, (unsigned long)gRtGt5,
                   (unsigned long)gLoopMaxUs, (unsigned long)gLoopGt5,
-                  (unsigned)coreNodeCount);
+                  (unsigned)coreNodeCount,
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                  (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     // per-window reset so each line is self-contained
     gLoopMaxUs = 0; gLoopGt5 = 0; gRtMaxUs = 0; gRtGt5 = 0; gRxQMax = 0;
   }

@@ -7,6 +7,22 @@ the base firmware history.
 
 ## Unreleased
 
+### 12-node scale sign-off kit
+- **New `scripts/mesh_signoff.py`** grades a Core's serial output against the
+  DESIGN §13 acceptance at the user's 12-node ceiling: time at target, no RX
+  deadline misses (`rx_drop`), no SD store drops, RX jitter p95 < 5 ms
+  (`rt_us`), no crash/reboot, no SD `err=0x101`, and an internal-heap floor.
+  It also reports flapping nodes, reassign count, `[PAIR]` overlap per group and
+  free heap per node count. Live capture opens the port with DTR/RTS low so the
+  Core isn't rebooted; `--log` re-grades a saved capture. Exit 0/1/2 =
+  PASS/FAIL/INCOMPLETE.
+- **The 5 s `[CORE-ISO]` line now ends with `| heap=N heap_min=M`**, the free and
+  lowest-ever-free internal RAM. That RAM is the binding constraint as the roster
+  grows and was previously only visible via the `v` command. The fields are
+  appended at the end, so older parsers keep working.
+- The procedure and pass table live in the wiki (Adaptive Scheduler → 12-node
+  scale sign-off).
+
 ### Correct the "shared SD+TFT SPI bus" claim
 - **Neither S3 board shares an SPI bus between its SD card and its TFT**, but
   comments and docs throughout said the Freenove S3 CYD did. In fact the
