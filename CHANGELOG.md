@@ -7,6 +7,14 @@ the base firmware history.
 
 ## Unreleased
 
+### CI: gate the legacy (flags-OFF) firmware path
+- **Added a `legacy-off-build` CI job.** Released builds ship every `PIG_FEAT_*`
+  scheduler flag ON, and the invariant is that the OFF path stays byte-identical
+  legacy. The host suite asserted the OFF *logic* but nothing compiled the
+  firmware OFF path, so a broken `#else`/`#ifndef` branch could slip through. CI
+  now also builds the most-flagged env (freenove) with every scheduler flag
+  undefined, so the legacy branches are compile-gated on every PR/push.
+
 ### Phase 4 Step 1: guard upload file-moves on the shared SPI bus
 - **Closed a shared-bus gap in the core-isolation lock discipline.** Under
   `PIG_FEAT_CORE_ISO` the per-record SD write runs on a core-0 task (`tStore`)

@@ -64,3 +64,37 @@ jobs:
 
       - name: Build
         run: pio run -d "${{ matrix.dir }}" -e "${{ matrix.env }}"
+
+  # The released builds ship every PIG_FEAT_* scheduler flag ON. The project's
+  # invariant (docs/Testing-and-Contributing.md) is that the OFF path stays
+  # byte-identical legacy — new feature code lives behind `#if PIG_FEAT_*`. The
+  # host suite asserts the OFF *logic*, but nothing compiled the firmware OFF
+  # path, so a broken `#else`/`#ifndef` branch could slip through. Build the
+  # most-flagged env (freenove, shared with guition) with every scheduler flag
+  # undefined so its legacy branches are gated too.
+  legacy-off-build:
+    name: Build freenove (scheduler flags OFF)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-freenove-off-${{ hashFiles('**/platformio.ini') }}
+          restore-keys: pio-freenove-off-
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+      - name: Build with every scheduler flag undefined
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -UPIG_FEAT_DEDUP -UPIG_FEAT_ADAPTIVE_DWELL -UPIG_FEAT_PAIR_SCHED
+            -UPIG_FEAT_DYNAMIC_ASSIGN -UPIG_FEAT_CORE_ISO
+        run: pio run -d WarHog_Freenove_S3_CYD_HAM_UI4 -e freenove-s3-cyd-ham-ui4

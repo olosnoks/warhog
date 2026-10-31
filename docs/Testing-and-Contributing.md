@@ -32,9 +32,11 @@ The **OFF path must stay byte-identical** to legacy — new feature code goes be
 CI runs on **every pull request and push to `main`** (plus manual dispatch) and does not
 deploy. It builds all six PlatformIO board envs, runs the scheduler host suite, and runs
 the drop-in drift guard (below) — so a broken build or a scheduler regression is caught
-before it reaches `main`. Releases and the GitHub Pages flasher stay with
-`build-and-deploy.yml` (`v*` tags), where the deploy is gated on the build so a broken env
-can't overwrite the live flasher.
+before it reaches `main`. A separate `legacy-off-build` job builds the most-flagged env
+(freenove) with every `PIG_FEAT_*` scheduler flag undefined, so the OFF/legacy path is
+compile-gated too — not just the shipped flags-ON default. Releases and the GitHub Pages
+flasher stay with `build-and-deploy.yml` (`v*` tags), where the deploy is gated on the
+build so a broken env can't overwrite the live flasher.
 
 ## Keeping the C5 header copies in sync
 The Arduino sketch `TDongleC5_WarHog/` has no include path, so it keeps **byte-identical
