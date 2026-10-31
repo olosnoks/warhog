@@ -4,6 +4,10 @@
 #include "Config.h"       // cfg, loadConfigFromSD()
 #include "SDUtils.h"      // normalizeSdPath(), sdLogFlushNow(), SdReader
 #include "SpiBusLock.h"   // spiBusLock()/spiBusUnlock() (no-op unless PIG_FEAT_CORE_ISO)
+#include <WiFi.h>
+#include <ArduinoJson.h>
+#include "WiFiManager.h"   // connectSTA() for WT UPLOAD
+#include "WigleUpload.h"   // uploadAllCsvsTo*()
 #include <string.h>
 #include <stdlib.h>
 #include "esp_heap_caps.h"   // heap snapshot in HELLO
@@ -224,16 +228,128 @@ static void cmdPutFile(const char* args) {
   startPut(path, size, crc, false);
 }
 
+// ---- device control: the Web UI's status / start / stop / upload / reboot over USB ----
+// Same effects as the /status.json, /start, /stop and /reboot routes in WebUI.cpp,
+// so the toolkit can run the device without joining its SoftAP.
+
+// One line: "WT STAT {json}". Built in a String and printed with one write so
+// another task's log line can't land in the middle of it.
+static void cmdStat() {
+  DynamicJsonDocument doc(1024);
+  const bool sta = (WiFi.status() == WL_CONNECTED);
+  doc["scanningEnabled"]  = scanningEnabled;
+  doc["allowScan"]        = scanningEnabled && (userScanOverride || !autoPaused) && !s_active;
+  doc["toolSession"]      = s_active;          // true: a toolkit session is pausing scans
+  doc["userScanOverride"] = userScanOverride;
+  doc["autoPaused"]       = autoPaused;
+  doc["sdOk"]             = sdOk;
+  doc["gpsFix"]           = gpsHasFix;
+  doc["found2g"]          = networksFound2G;
+  doc["found5g"]          = wardriverIsC5() ? networksFound5G : 0;
+  doc["c5Connected"]      = wardriverIsC5();
+  doc["wifiConnected"]    = sta;
+  doc["staIp"]            = sta ? WiFi.localIP().toString() : String("");
+  doc["apActive"]         = apWindowActive;
+  doc["logFile"]          = currentCsvPath;
+  doc["uploading"]        = uploading;
+  doc["uploadLastResult"] = uploadLastResult;
+  doc["wigleTokenStatus"] = wigleTokenStatus;
+  doc["homeSsidSet"]      = cfg.homeSsid.length() > 0 && cfg.homeSsid != "EnterWifiHere";
+  doc["hasWigle"]         = cfg.wigleBasicToken.length() > 0;
+  doc["hasWdgwars"]       = cfg.wdgwarsApiKey.length() > 0;
+  doc["hasWardrift"]      = cfg.wardriftApiKey.length() > 0;
+  doc["uptimeMs"]         = millis();
+  String out;
+  out.reserve(640);
+  out = "WT STAT ";
+  serializeJson(doc, out);
+  out += '\n';
+  Serial.print(out);
+}
+
+// WT SCAN START | STOP. START also ends the toolkit session: scanning and the
+// toolkit share the SD bus, and the main loop never scans while s_active.
+static void cmdScan(const char* a) {
+  if (!strcmp(a, "START")) {
+    scanningEnabled  = true;
+    userScanOverride = true;
+    if (apWindowActive) apForceClose = true;   // same as /start: let scanning begin now
+    s_active = false;
+    Serial.println("WT OK scan on");
+  } else if (!strcmp(a, "STOP")) {
+    scanningEnabled  = false;
+    userScanOverride = true;
+    Serial.println("WT OK scan off");
+  } else {
+    Serial.println("WT ERR scansub");
+  }
+}
+
+// WT UPLOAD [all|wdgwars|wardrift] -> WT OK <uploaded> <total> <message>
+// Same flow as the home-network return: join homeSsid if not already on Wi-Fi,
+// upload pending CSVs, then drop the link again if this command raised it so
+// wardriving can resume. "all" runs uploadAllCsvsToWigle(), which also does
+// WDGoWars first when a key is set. Blocks until done; the host waits.
+static void cmdUpload(const char* a) {
+  if (!sdOk) { Serial.println("WT ERR nosd"); return; }
+  const bool wdg = !strcmp(a, "wdgwars");
+  const bool wdr = !strcmp(a, "wardrift");
+  const bool all = !*a || !strcmp(a, "all") || !strcmp(a, "wigle");
+  if (!wdg && !wdr && !all) { Serial.println("WT ERR uploadsub"); return; }
+
+  bool raised = false;
+  if (WiFi.status() != WL_CONNECTED) {
+    if (cfg.homeSsid.length() == 0 || cfg.homeSsid == "EnterWifiHere") { Serial.println("WT ERR nohome"); return; }
+    Serial.println("[TK] upload: connecting to home Wi-Fi");
+    if (!connectSTA(12000)) {
+      WiFi.setAutoReconnect(false);
+      WiFi.persistent(false);
+      WiFi.disconnect(true, false);
+      delay(50);
+      WiFi.mode(WIFI_STA);
+      Serial.println("WT ERR nowifi");
+      return;
+    }
+    raised = true;
+  }
+
+  const uint32_t n = wdg ? uploadAllCsvsToWdgwars(-1)
+                   : wdr ? uploadAllCsvsToWardrift(-1)
+                         : uploadAllCsvsToWigle(-1);
+  String msg = uploadLastResult;
+  msg.replace("\r", " ");
+  msg.replace("\n", " ");
+  Serial.printf("WT OK %lu %lu %s\n", (unsigned long)n, (unsigned long)uploadTotalFiles, msg.c_str());
+
+  if (raised) {
+    WiFi.setAutoReconnect(false);
+    WiFi.persistent(false);
+    WiFi.disconnect(true, false);   // eraseap=false keeps NVS credentials
+    delay(50);
+    WiFi.mode(WIFI_STA);            // idle STA ready for scanning
+  }
+}
+
+static void cmdReboot() {
+  closeLogFile();                   // flush & close the active CSV log cleanly
+  Serial.println("WT OK reboot");
+  Serial.flush();
+  delay(200);
+  ESP.restart();                    // never returns
+}
+
 bool serialToolHandleLine(const char* line) {
   if (!(line[0] == 'W' && line[1] == 'T')) return false;
   if (!(line[2] == ' ' || line[2] == '\0')) return false;
-  s_lastMs = millis();
 
   const char* rest = line + 2; while (*rest == ' ') rest++;
   char verb[12]; int vi = 0;
   while (rest[vi] && rest[vi] != ' ' && vi < 11) { verb[vi] = rest[vi]; vi++; }
   verb[vi] = 0;
   const char* args = rest + vi; while (*args == ' ') args++;
+  // Status polls don't count as activity, so an idle session (and the scan
+  // pause it holds) still times out while a status view is open.
+  if (strcmp(verb, "STAT") != 0) s_lastMs = millis();
 
   // A PUT in progress: only DATA / ABORT are expected; anything else aborts it.
   if (s_putting) {
@@ -268,6 +384,10 @@ bool serialToolHandleLine(const char* line) {
       startPut(CFG_PATH, size, crc, true);
     } else Serial.println("WT ERR cfgsub");
   }
+  else if (!strcmp(verb, "STAT"))   cmdStat();
+  else if (!strcmp(verb, "SCAN"))   cmdScan(args);
+  else if (!strcmp(verb, "UPLOAD")) cmdUpload(args);
+  else if (!strcmp(verb, "REBOOT")) cmdReboot();
   else if (!strcmp(verb, "BYE"))   { if (s_putting) putCleanup(true); s_active = false; Serial.println("WT BYE"); }
   else if (verb[0] == 0)           Serial.println("WT PONG");  // bare "WT"
   else                             Serial.printf("WT ERR unknown %s\n", verb);
