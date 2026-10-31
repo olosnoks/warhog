@@ -51,6 +51,12 @@ copy drifts from its `scheduler/` source. Run it locally before pushing:
 bash scripts/check-dropins.sh
 ```
 
+## Line endings
+The repo is **LF-only** (`.gitattributes`: `* text=auto eol=lf`, with image/STL/`.bin`/zip
+marked `binary`). Commit source as LF; on Windows, Git normalizes checkouts so you won't see
+the old "LF will be replaced by CRLF" warnings. The committed blobs were already LF — the
+policy just makes it explicit and stops a stray CRLF file from slipping in.
+
 ## Gotchas worth knowing
 - **Arduino build artifact:** before committing `warhog_fork`, remove
   `warhog_fork/WarHog.ino.cpp` (a generated artifact; never commit it).

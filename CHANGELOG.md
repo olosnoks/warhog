@@ -7,6 +7,17 @@ the base firmware history.
 
 ## Unreleased
 
+### Repo line-ending policy (LF)
+- **Added a `.gitattributes` LF policy for the whole tree.** Local working
+  copies carried a mix of CRLF/LF (which made cross-project diffs show as 100%
+  changed and triggered "LF will be replaced by CRLF" warnings on every commit).
+  The committed blobs were already LF — the CRLF was only a Windows checkout
+  artifact — so `git add --renormalize` was nearly a no-op: it touched only one
+  file actually stored with CRLF (`TDongleC5_WarHog/wardriver.cfg`, now LF,
+  content unchanged). The policy marks all text as LF and binary assets
+  (images, STL, `.bin`, zip) as binary, so checkouts are consistent and no
+  future CRLF blob can slip in. No source change; nothing recompiled.
+
 ### Share the SD path helpers via `common/` (end a divergence)
 - **Extracted the byte-identical SD path/name helpers into `common/sd_paths.h`.**
   `pathBasename`, `normalizeSdPath`, `isAllowedDataPath` and `sanitiseDeviceName`

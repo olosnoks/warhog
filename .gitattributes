@@ -1,3 +1,42 @@
-# Shell scripts must stay LF: CI runs them on Linux, and a CRLF shebang line
-# ("\r") makes the kernel fail to find the interpreter.
-*.sh text eol=lf
+# Repository line-ending policy.
+#
+# The tree had a mix of CRLF and LF source files (even within one project),
+# which made cross-project diffs show as 100% changed and triggered "LF will be
+# replaced by CRLF" warnings on every commit. Normalize all text to LF in the
+# repo; binary assets are marked explicitly so they are never touched.
+
+# Default: auto-detect text, store it with LF.
+* text=auto eol=lf
+
+# Explicit text files (firmware sources, docs, config) — always LF.
+*.h       text eol=lf
+*.cpp     text eol=lf
+*.c       text eol=lf
+*.ino     text eol=lf
+*.md      text eol=lf
+*.json    text eol=lf
+*.ini     text eol=lf
+*.html    text eol=lf
+*.js      text eol=lf
+*.css     text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.sh      text eol=lf
+*.cfg     text eol=lf
+*.patch   text eol=lf
+*.txt     text eol=lf
+
+# Binary assets — never normalize EOLs, never diff/merge as text.
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.webp    binary
+*.bin     binary
+*.stl     binary
+*.step    binary
+*.stp     binary
+*.3mf     binary
+*.zip     binary
+*.gz      binary
