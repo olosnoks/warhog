@@ -423,12 +423,9 @@
     if ($('tkDlSel')) {
       const sel = view.filter((e) => selected.has(e.path));
       $('tkDlSel').disabled = busy || !sel.length;
-      $('tkDlSel').title = sel.length > 1 || (sel.length === 1 && sel[0].dir) ? 'Download selection as a .zip' : 'Download selected';
+      $('tkDlSel').title = sel.some((e) => e.dir) ? 'Download into a folder you choose' : 'Download selected';
     }
-    if ($('tkDelSel')) {
-      $('tkDelSel').disabled = busy || !files.length;
-      $('tkDelSel').title = anySel && !files.length ? 'Folders can’t be deleted from here' : 'Delete selected (Del)';
-    }
+    if ($('tkDelSel')) $('tkDelSel').disabled = busy || !anySel;
     if ($('tkUp')) $('tkUp').disabled = busy || cwd === '/';
     if ($('tkCfgSave')) $('tkCfgSave').disabled = busy || !cfgValid;   // never save a non-text config
     const nd = view.filter((e) => e.dir).length, nf = view.length - nd;
@@ -502,50 +499,19 @@
     finally { setBusy(false); }
   }
 
-  // ---------- Folder / multi-select download as one .zip ----------
-  const ZIP_CONFIRM_BYTES = 25 * 1024 * 1024;   // ask first above this (USB is ~100s of KB/s)
-
-  // Stored (uncompressed) zip: local headers + data, central directory, end record.
-  // Names are UTF-8 (flag bit 11); folders get "name/" entries so empty ones survive.
-  function makeZip(items) {
-    const d = new Date();
-    const dosTime = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
-    const dosDate = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
-    const parts = [], central = [];
-    let off = 0;
-    for (const it of items) {
-      const name = enc.encode(it.name);
-      const data = it.bytes || new Uint8Array(0);
-      const crc = it.bytes ? crc32(data) : 0;
-      const lh = new DataView(new ArrayBuffer(30));
-      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true);
-      lh.setUint16(8, 0, true); lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true);
-      lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true);
-      lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
-      parts.push(lh.buffer, name, data);
-      const ch = new DataView(new ArrayBuffer(46));
-      ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true);
-      ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true); ch.setUint16(12, dosTime, true);
-      ch.setUint16(14, dosDate, true); ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true);
-      ch.setUint32(24, data.length, true); ch.setUint16(28, name.length, true);
-      ch.setUint32(38, it.bytes ? 0 : 0x10, true);          // MS-DOS directory attribute
-      ch.setUint32(42, off, true);
-      central.push(ch.buffer, name);
-      off += 30 + name.length + data.length;
-    }
-    const cdSize = central.reduce((t, b) => t + b.byteLength, 0);
-    const end = new DataView(new ArrayBuffer(22));
-    end.setUint32(0, 0x06054b50, true); end.setUint16(8, items.length, true); end.setUint16(10, items.length, true);
-    end.setUint32(12, cdSize, true); end.setUint32(16, off, true);
-    return new Blob([...parts, ...central, end.buffer], { type: 'application/zip' });
-  }
+  // ---------- Download files and/or folders (no zip) ----------
+  // Files download normally. Folders need somewhere to go, so Chrome/Edge's
+  // folder picker (File System Access API) is used to write the tree as plain
+  // files into a folder the user chooses; without it, a folder's files fall
+  // back to ordinary downloads.
+  const DL_CONFIRM_BYTES = 25 * 1024 * 1024;   // ask first above this (USB is ~100s of KB/s)
 
   // Every file and folder under the selection, with paths relative to cwd.
   async function collectTree(items) {
     const files = [], dirs = [];
     const rel = (p) => p.slice(cwd === '/' ? 1 : cwd.length + 1);
     const walk = async (dir) => {
-      dirs.push(rel(dir) + '/');
+      dirs.push({ path: dir, name: rel(dir) + '/' });
       $('tkStatus').textContent = 'listing ' + dir + '…';
       const r = await ls(dir);
       for (const f of r.files) files.push({ path: f.path, name: rel(f.path), size: f.size });
@@ -558,36 +524,62 @@
     return { files, dirs };
   }
 
+  async function writeTree(root, files, dirs) {
+    const dirCache = new Map([['', root]]);
+    const dirFor = async (relDir) => {
+      if (dirCache.has(relDir)) return dirCache.get(relDir);
+      const i = relDir.lastIndexOf('/');
+      const parent = await dirFor(i < 0 ? '' : relDir.slice(0, i));
+      const h = await parent.getDirectoryHandle(relDir.slice(i + 1), { create: true });
+      dirCache.set(relDir, h);
+      return h;
+    };
+    for (const d of dirs) await dirFor(d.name.replace(/\/$/, ''));    // keeps empty folders
+    const total = files.reduce((t, f) => t + f.size, 0);
+    let done = 0;
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const bytes = await get(f.path, (r) => {
+        $('tkStatus').textContent = 'saving ' + (i + 1) + '/' + files.length + ' · ' + fmtSize(done + r) + ' / ' + fmtSize(total);
+      });
+      done += bytes.length;
+      const j = f.name.lastIndexOf('/');
+      const dir = await dirFor(j < 0 ? '' : f.name.slice(0, j));
+      const fh = await dir.getFileHandle(f.name.slice(j + 1), { create: true });
+      const w = await fh.createWritable();
+      await w.write(bytes);
+      await w.close();
+      log('Saved ' + f.name + ' (' + bytes.length + ' B)');
+    }
+  }
+
   async function downloadSelection() {
     const items = view.filter((e) => selected.has(e.path));
     if (!items.length || busy) return;
-    if (items.length === 1 && !items[0].dir) return downloadItems(items);
+    if (!items.some((it) => it.dir)) return downloadItems(items);     // just files: normal downloads
+    // Ask where to save first: the picker must open straight from the click.
+    let root = null;
+    if (window.showDirectoryPicker) {
+      try { root = await window.showDirectoryPicker({ id: 'piglet-sd', mode: 'readwrite' }); }
+      catch (e) { if (e.name === 'AbortError') return; root = null; }
+    }
     setBusy(true);
     try {
       const { files, dirs } = await collectTree(items);
       const total = files.reduce((t, f) => t + f.size, 0);
-      if (total > ZIP_CONFIRM_BYTES &&
-          !confirm('Download ' + files.length + ' files (' + fmtSize(total) + ') as a zip?\nOver USB this can take a while.')) {
+      if (total > DL_CONFIRM_BYTES &&
+          !confirm('Download ' + files.length + ' files (' + fmtSize(total) + ')?\nOver USB this can take a while.')) {
         $('tkStatus').textContent = 'download cancelled';
         return;
       }
-      const zipName = items.length === 1 ? items[0].name + '.zip'
-        : 'piglet-' + (cwd === '/' ? 'sd' : baseName(cwd)) + '.zip';
-      const entries = dirs.map((n) => ({ name: n }));
-      let done = 0;
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        const bytes = await get(f.path, (r) => {
-          $('tkStatus').textContent = 'zipping ' + (i + 1) + '/' + files.length + ' · ' + fmtSize(done + r) + ' / ' + fmtSize(total);
-        });
-        done += bytes.length;
-        entries.push({ name: f.name, bytes });
-        log('GET ' + f.path + ' (' + bytes.length + ' B)');
+      if (root) {
+        await writeTree(root, files, dirs);
+        $('tkStatus').textContent = 'saved ' + files.length + ' file' + (files.length === 1 ? '' : 's') + ' (' + fmtSize(total) + ') into ' + root.name;
+      } else {
+        setBusy(false);                                               // downloadItems manages busy itself
+        await downloadItems(files.map((f) => ({ path: f.path, name: baseName(f.path), size: f.size })));
       }
-      saveBytes(zipName, makeZip(entries));
-      $('tkStatus').textContent = 'downloaded ' + zipName + ' (' + files.length + ' file' + (files.length === 1 ? '' : 's') + ', ' + fmtSize(total) + ')';
-      log('Saved ' + zipName);
-    } catch (e) { log('Zip download failed: ' + e.message); $('tkStatus').textContent = 'download failed: ' + e.message; }
+    } catch (e) { log('Download failed: ' + e.message); $('tkStatus').textContent = 'download failed: ' + e.message; }
     finally { setBusy(false); }
   }
 
@@ -800,19 +792,45 @@
     downloadItems([it]);
   }
 
+  // Folders are deleted contents-first: every file, then the folders deepest
+  // first (the firmware's RM only removes a folder once it is empty). The log
+  // the Piglet is writing is refused by the firmware ("busy") and kept.
   async function deleteSelected() {
-    const files = selectedFiles();
-    if (!files.length || busy) return;
-    const what = files.length === 1 ? files[0].path : files.length + ' files';
-    if (!confirm('Permanently delete ' + what + ' from the SD card?\nThis cannot be undone.')) return;
+    const items = view.filter((e) => selected.has(e.path));
+    if (!items.length || busy) return;
     setBusy(true);
-    let failed = 0;
-    for (const f of files) {
-      try { await rm(f.path); log('Deleted ' + f.path); selected.delete(f.path); }
-      catch (e) { failed++; log('RM failed ' + f.path + ': ' + e.message); }
+    let tree;
+    try { tree = await collectTree(items); }
+    catch (e) { setBusy(false); alert('Could not list the selection: ' + e.message); return; }
+    const { files, dirs } = tree;
+    const bytes = files.reduce((t, f) => t + f.size, 0);
+    const what = !dirs.length
+      ? (files.length === 1 ? files[0].path : files.length + ' files')
+      : dirs.length + ' folder' + (dirs.length === 1 ? '' : 's') + ' and ' + files.length + ' file' + (files.length === 1 ? '' : 's') + ' (' + fmtSize(bytes) + ')';
+    if (!confirm('Permanently delete ' + what + ' from the SD card?\nThis cannot be undone.')) {
+      setBusy(false); $('tkStatus').textContent = 'delete cancelled'; return;
     }
+    let failed = 0, inUse = 0, n = 0;
+    const total = files.length + dirs.length;
+    for (const f of files) {
+      $('tkStatus').textContent = 'deleting ' + (++n) + '/' + total + ' · ' + f.name;
+      try { await rm(f.path); log('Deleted ' + f.path); }
+      catch (e) { if (/busy/.test(e.message)) inUse++; else failed++; log('RM failed ' + f.path + ': ' + e.message); }
+    }
+    const depth = (p) => p.split('/').length;
+    for (const d of dirs.slice().sort((a, b) => depth(b.path) - depth(a.path))) {
+      $('tkStatus').textContent = 'deleting ' + (++n) + '/' + total + ' · ' + d.name;
+      try { await rm(d.path); log('Deleted folder ' + d.path); }
+      catch (e) { if (!inUse) failed++; log('RM failed ' + d.path + ': ' + e.message); }
+    }
+    for (const it of items) selected.delete(it.path);
     setBusy(false);
-    if (failed) alert(failed + ' file(s) could not be deleted — see the log.');
+    const notes = [];
+    if (inUse) notes.push('The log the Piglet is writing right now was kept (and its folder with it).');
+    if (failed) notes.push(failed + ' item(s) could not be deleted — see the log.' +
+      (dirs.length ? ' Deleting folders needs the latest Piglet firmware.' : ''));
+    $('tkStatus').textContent = notes.length ? 'delete finished with notes' : 'deleted ' + what;
+    if (notes.length) alert(notes.join('\n'));
     refreshFiles();
   }
 

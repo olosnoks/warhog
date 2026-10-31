@@ -199,8 +199,11 @@ static void cmdLs(const char* dir) {
 static void cmdRm(const char* path) {
   if (!sdOk) { Serial.println("WT ERR nosd"); return; }
   if (!*path) { Serial.println("WT ERR nopath"); return; }
+  // Never delete the log being written: FatFs would unlink an open file.
+  if (currentCsvPath.length() && currentCsvPath == path) { Serial.println("WT ERR busy"); return; }
   spiBusLock();
   bool ok = SD.remove(path);
+  if (!ok) ok = SD.rmdir(path);              // empty folder (the Toolkit deletes contents first)
   spiBusUnlock();
   Serial.println(ok ? "WT OK" : "WT ERR rm");
 }

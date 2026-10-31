@@ -63,11 +63,19 @@ the base firmware history.
   like a text editor: line numbers, wrapped long lines, dimmed `#` comments,
   highlighted `[sections]` and `key=value` pairs. Non-text bytes are shown as
   faint dots instead of replacement glyphs.
-- **Download whole folders.** Select one or more folders, or a mix of folders and
-  files, and Download saves a single `.zip` with the folder structure kept,
-  including subfolders and empty folders. It is built in the browser, with
-  progress in the status bar and a confirmation above 25 MB. A single selected
-  file still downloads as itself.
+- **Download whole folders, no zip.** Select folders and/or files and click
+  Download. Folders are written as plain files, with their structure, into a
+  folder you pick, using Chrome/Edge's folder picker. Files alone download
+  normally. Without the picker, a folder's files download one by one. There is a
+  progress readout and a confirmation above 25 MB.
+- **Delete whole folders.** Delete now works on folders. The Toolkit lists
+  everything inside, confirms with the folder and file counts and total size,
+  then deletes the files and the folders deepest-first. Firmware `WT RM` now also
+  removes an empty folder, and refuses the log currently being written
+  (`WT ERR busy`), so that log and its folder are kept. Deleting folders needs
+  this firmware.
+- The flasher loads `toolkit.js?v=<build>`, so browsers pick up a new Toolkit
+  right after a deploy instead of running a cached copy.
 - **Config editor: form only.** Removed the Raw tab; the form still edits the file
   text in place so comments and unknown keys survive. Save is now refused when the
   card's `wardriver.cfg` isn't readable text, so binary data can never be written
