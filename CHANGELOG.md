@@ -7,16 +7,17 @@ the base firmware history.
 
 ## Unreleased
 
-### Guition W550: recover a wedged SD bus
-- **SD bus recovery ported to the Guition W550.** After sustained heavy SPI SD
-  I/O the bus can wedge, so `SD.open()`/`SD.exists()` fail even though the card
-  is intact. The W550 now mounts via `sdBeginBestClock()` (fastest stable clock
-  on a 20→16→12→8→4→1 MHz ladder) and clears a wedge with `sdTryRecover()`
-  (unmount + remount one rung slower, rate-limited to once per 4 s, never below
-  4 MHz, until reboot) — the same mechanism the XIAO C5 Core already uses.
-  Recovery runs on `openLogFile()` open-failure and on a `moveToFolder()`
-  "source missing". The **Freenove CYD** (4-bit SD_MMC) is unaffected: both
-  helpers are no-ops there until an SD_MMC variant lands.
+### CYD: recover a wedged SD bus (both backends)
+- **SD bus recovery on the Guition W550 and Freenove CYD.** After sustained
+  heavy SD I/O the bus can wedge, so file opens fail even though the card is
+  intact. Both boards now mount via `sdBeginBestClock()` and clear a wedge with
+  `sdTryRecover()` (unmount + remount one rung slower, rate-limited to once per
+  4 s, until reboot), invoked on `openLogFile()` open-failure and on a
+  `moveToFolder()` "source missing" — the same mechanism the XIAO C5 Core uses.
+  - **Guition W550** (SPI SD): clock ladder 20→16→12→8→4→1 MHz, never below 4 MHz.
+  - **Freenove CYD** (4-bit SD_MMC): SDIO ladder via `SD_MMC.begin()`
+    `maxClkFreqKHz` 20000→16000→8000→4000→1000 kHz; recovery is `SD_MMC.end()`
+    then re-`setPins`/`begin()` slower.
 
 ### Pre-merge CI gate + drop-in header drift guard
 - **CI now runs before merge, not just on deploy.** A new workflow

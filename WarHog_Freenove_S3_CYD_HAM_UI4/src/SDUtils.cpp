@@ -65,9 +65,62 @@ bool sdTryRecover() {
   Serial.printf("[SD] Recovery %s\n", ok ? "OK" : "FAILED");
   return ok;
 }
-#else
-bool sdBeginBestClock(uint8_t /*csPin*/) { return false; }   // SD_MMC variant TODO
-bool sdTryRecover() { return false; }
+#else   // Freenove CYD: 4-bit SDIO (SD_MMC). The clock "ladder" is the begin()
+        // maxClkFreqKHz argument; a wedge is cleared by remounting slower.
+static const uint32_t kMmcLadderKHz[] = { 20000, 16000, 8000, 4000, 1000 };
+static uint32_t sdRunKHz    = 0;   // clock the card mounted at
+static uint32_t sdDynCapKHz = 0;   // lowered by sdTryRecover() when the bus proves flaky
+
+// setPins must precede begin(), and must be re-asserted after an end() during
+// recovery, so the mount helper always does both.
+static bool mmcBeginAt(uint32_t khz) {
+  if (!SD_MMC.setPins(BoardPins::SD_CLK, BoardPins::SD_CMD,
+                      BoardPins::SD_D0, BoardPins::SD_D1,
+                      BoardPins::SD_D2, BoardPins::SD_D3)) {
+    return false;
+  }
+  return SD_MMC.begin("/sdcard", false, false, khz, 8);
+}
+
+bool sdBeginBestClock(uint8_t /*csPin*/) {
+  uint32_t capKHz = 20000;
+  if (sdDynCapKHz && sdDynCapKHz < capKHz) capKHz = sdDynCapKHz;
+
+  for (size_t i = 0; i < sizeof(kMmcLadderKHz) / sizeof(kMmcLadderKHz[0]); i++) {
+    uint32_t khz = kMmcLadderKHz[i];
+    if (khz > capKHz) continue;
+    if (mmcBeginAt(khz)) {
+      Serial.printf("[SD] Running at %lu kHz\n", (unsigned long)khz);
+      sdRunKHz = khz;
+      return true;
+    }
+    SD_MMC.end();
+  }
+  return false;
+}
+
+static uint32_t sdLastRecoverMs = 0;
+bool sdTryRecover() {
+  uint32_t now = millis();
+  if (now - sdLastRecoverMs < 4000) return false;   // rate-limit: don't hammer a dead card
+  sdLastRecoverMs = now;
+
+  // Remount one rung slower than the clock the card mounted at (floor 1 MHz).
+  for (size_t i = 0; i + 1 < sizeof(kMmcLadderKHz) / sizeof(kMmcLadderKHz[0]); i++) {
+    if (sdRunKHz && kMmcLadderKHz[i] <= sdRunKHz) {
+      sdDynCapKHz = kMmcLadderKHz[i + 1];
+      break;
+    }
+  }
+  Serial.printf("[SD] Attempting SD bus recovery (SD_MMC.end + reinit, cap %lu kHz)...\n",
+                (unsigned long)sdDynCapKHz);
+  SD_MMC.end();
+  delay(50);
+  bool ok = sdBeginBestClock(0);
+  sdOk = ok;
+  Serial.printf("[SD] Recovery %s\n", ok ? "OK" : "FAILED");
+  return ok;
+}
 #endif
 
 // ---- Path helpers ----

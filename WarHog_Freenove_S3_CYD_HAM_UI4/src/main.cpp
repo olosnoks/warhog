@@ -60,18 +60,9 @@ static bool initSd() {
 }
 #else
 static bool initSd() {
-  if (!SD_MMC.setPins(
-          BoardPins::SD_CLK,
-          BoardPins::SD_CMD,
-          BoardPins::SD_D0,
-          BoardPins::SD_D1,
-          BoardPins::SD_D2,
-          BoardPins::SD_D3)) {
-    Serial.println("[SD] SD_MMC.setPins failed");
-    return false;
-  }
-
-  if (!SD_MMC.begin("/sdcard", false, false, 20000, 8)) {
+  // Mount at the best SDIO clock (setPins is done inside); a later wedge is
+  // cleared by sdTryRecover(), which remounts one rung slower.
+  if (!sdBeginBestClock(0)) {
     Serial.println("[SD] SD_MMC mount failed");
     return false;
   }
