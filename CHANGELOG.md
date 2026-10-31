@@ -14,8 +14,11 @@ the base firmware history.
   — the upload-time file move run on core 1 (`WigleUpload`/`WebUI`) — took no
   lock, so it could collide with `tStore` on a board where SD and TFT share the
   SPI bus. Added a `SpiBusGuard` RAII scope (auto-unlocks on every return) around
-  the whole move. No-op when `PIG_FEAT_CORE_ISO` is OFF (the default), so the
-  shipped behavior is byte-identical; the ON path builds on both CYD envs.
+  the whole move. `PIG_FEAT_CORE_ISO` ships **ON** on both CYD envs, so the guard
+  is live in the released CYD firmware: on the **guition** (SPI SD) `moveToFolder`
+  and `tStore` are both SD writers, so it prevents a real two-writer bus collision;
+  on the **freenove** (SDIO SD) it is harmless serialization. It compiles to a
+  no-op only where the flag is unset (host tests). It changes no logged data.
 
 ### CYD: recover a wedged SD bus (both backends)
 - **SD bus recovery on the Guition W550 and Freenove CYD.** After sustained

@@ -58,10 +58,14 @@ Acceptance target (DESIGN §13): **0 RX deadline misses, RX jitter < 5 ms, at �
 
 - **Step 1 — SD isolation:** the per-record WiGLE SD write runs on a FreeRTOS task pinned
   to **core 0** (`tStore`), fed by a 48-deep lossy `xQueue`; the loop keeps draining
-  ESP-NOW. On the CYD the SD and TFT share one SPI bus, so `tStore` and the UI's
-  `present()` both take the `SpiBusLock.h` recursive mutex. Upload-time file moves
-  (`moveToFolder`, run on core 1 via `WigleUpload`/`WebUI`) take the same lock via a
-  `SpiBusGuard` RAII scope, so they can't collide with `tStore`'s SD writes on core 0.
+  ESP-NOW. `tStore`, the UI's `present()`, and upload-time file moves (`moveToFolder`,
+  run on core 1 via `WigleUpload`/`WebUI`, guarded by a `SpiBusGuard` RAII scope) all
+  take the `SpiBusLock.h` recursive mutex so they can't drive the bus at once.
+  **Board reality:** the mutex was written for the ILI9341-SPI-TFT CYD variant where SD
+  and the TFT literally share pins 10–13. On the two current build envs they don't — the
+  **freenove** uses SDIO SD (separate pins) and the **guition W550** an RGB (parallel) TFT
+  — so the only real same-bus contenders there are `tStore` and `moveToFolder`, both SPI-SD
+  writers on the guition. `PIG_FEAT_CORE_ISO` ships ON for both CYD envs, so the lock is live.
 - **Step 5 — RX-drain isolation:** the `coreTextBuf` drain (parse + SD-enqueue) moves onto
   a second core-0 task (`tRxDrain`); the phone-app mirror + UI telemetry are handed back to
   the loop via a `coreMirrorBuf` SPSC ring so NimBLE/UI state stays single-core.
