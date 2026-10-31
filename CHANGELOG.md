@@ -18,6 +18,19 @@ the base firmware history.
   the flasher serves.
 - Fixed a CYD/W550 build break: `SerialTool.cpp` included `<SD.h>` on top of
   `StorageCompat.h`'s `SD`→`SD_MMC` remap.
+- **Toolkit file browser.** The SD explorer now looks and works like a small desktop
+  file browser: a window with a title bar showing the current folder, icon toolbar,
+  file-type icons (CSV, CFG, PCAP, BIN...), Finder-style selection and a status bar;
+  an address bar with Up/Refresh, double-click into folders (starts at the
+  card root), sortable Name/Size/Type columns with folders first, click / Ctrl /
+  Shift / Ctrl+A selection, toolbar Download / Delete on the selection, upload into
+  the current folder (button or drag-and-drop, with a replace prompt), text preview
+  for `.cfg`/`.csv`/`.txt`/`.log`/`.json` on double-click, and keyboard shortcuts
+  (Enter, Del, Backspace, arrows).
+- **Config editor: form only.** Removed the Raw tab; the form still edits the file
+  text in place so comments and unknown keys survive. Save is now refused when the
+  card's `wardriver.cfg` isn't readable text, so binary data can never be written
+  back over a config; a missing file is created on Save.
 - **Toolkit connect fixes.** Connecting no longer freezes the page: the serial read
   loop re-acquired a reader in a tight microtask loop when reads failed (e.g. while
   the board rebooted), starving the tab. It now exits cleanly, caps restarts, and

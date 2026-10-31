@@ -213,7 +213,11 @@
 
   // ---- connection lifecycle ----
   let connected = false, busy = false;
-  function setBusy(b) { busy = b; document.querySelectorAll('#tkPanel button, #tkPanel select, #tkPanel input').forEach(e => { e.disabled = b; }); }
+  function setBusy(b) {
+    busy = b;
+    document.querySelectorAll('#tkPanel button, #tkPanel select, #tkPanel input').forEach(e => { e.disabled = b; });
+    if (!b) updateToolbar();   // re-apply selection-based button states
+  }
 
   let connecting = false;
   async function connect() {
@@ -275,73 +279,324 @@
     $('tkPanel').style.display = 'none';
   }
 
-  // ---- file explorer UI ----
-  const FOLDERS = ['/logs', '/uploaded', '/archived', '/'];
+  // ---- file explorer UI (traditional file browser) ----
+  // Folder navigation (breadcrumbs / Up / double-click), sortable columns,
+  // click / Ctrl / Shift selection, toolbar actions on the selection,
+  // drag-and-drop upload into the current folder, and a text preview.
+  const TEXT_EXT = ['cfg', 'csv', 'txt', 'log', 'json', 'md', 'ini', 'conf'];
+  const PREVIEW_MAX = 256 * 1024;
+  let cwd = '/';
+  let entries = [];             // [{ path, name, dir, size }]
+  let view = [];                // entries in display order
+  let sortKey = 'name', sortDir = 1;
+  const selected = new Set();   // selected paths
+  let anchor = -1;              // shift-select anchor index into view
+
+  const baseName = (p) => p.replace(/\/+$/, '').split('/').pop() || '/';
+  const extOf = (n) => { const i = n.lastIndexOf('.'); return i > 0 ? n.slice(i + 1).toLowerCase() : ''; };
+  const parentOf = (p) => (p.replace(/\/[^/]+\/?$/, '') || '/');
+  const joinPath = (dir, name) => (dir === '/' ? '' : dir) + '/' + name;
+  function typeOf(e) {
+    if (e.dir) return 'Folder';
+    const x = extOf(e.name);
+    return ({ csv: 'CSV log', cfg: 'Config', txt: 'Text', log: 'Log', json: 'JSON', bin: 'Firmware',
+              pcap: 'Capture', pcapng: 'Capture', gz: 'Archive', tmp: 'Temp' })[x] || (x ? x.toUpperCase() + ' file' : 'File');
+  }
+  const SVG_FOLDER = '<svg viewBox="0 0 24 24"><path fill="#d9a93b" d="M2 6.5A2.5 2.5 0 0 1 4.5 4h4.2l2 2.2h8.8A2.5 2.5 0 0 1 22 8.7v9.8a2.5 2.5 0 0 1-2.5 2.5h-15A2.5 2.5 0 0 1 2 18.5z"/><path fill="#f3c654" d="M2 9.5A1.5 1.5 0 0 1 3.5 8h17A1.5 1.5 0 0 1 22 9.5v9a2.5 2.5 0 0 1-2.5 2.5h-15A2.5 2.5 0 0 1 2 18.5z"/></svg>';
+  const SVG_UP = '<svg viewBox="0 0 24 24"><path fill="#d9a93b" d="M2 6.5A2.5 2.5 0 0 1 4.5 4h4.2l2 2.2h8.8A2.5 2.5 0 0 1 22 8.7v9.8a2.5 2.5 0 0 1-2.5 2.5h-15A2.5 2.5 0 0 1 2 18.5z"/><path fill="#f3c654" d="M2 9.5A1.5 1.5 0 0 1 3.5 8h17A1.5 1.5 0 0 1 22 9.5v9a2.5 2.5 0 0 1-2.5 2.5h-15A2.5 2.5 0 0 1 2 18.5z"/><path d="M12 18v-6m-3 3 3-3 3 3" stroke="#7a5a12" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const SVG_DRIVE = '<svg viewBox="0 0 24 24"><path fill="#8b93b8" d="M7 2h8l4 4v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path fill="#5d6488" d="M9 4h1.4v4H9zm2.6 0H13v4h-1.4zm2.6 0h1.4v4h-1.4z"/></svg>';
+  function iconOf(e) {
+    if (e.dir) return SVG_FOLDER;
+    const x = extOf(e.name);
+    const [col, lbl] = ({ csv: ['#3fb950', 'CSV'], cfg: ['#e3863b', 'CFG'], ini: ['#e3863b', 'INI'], conf: ['#e3863b', 'CFG'],
+      txt: ['#8b93b8', 'TXT'], log: ['#8b93b8', 'LOG'], json: ['#d2a106', '{ }'], bin: ['#a371f7', 'BIN'],
+      gz: ['#a371f7', 'GZ'], pcap: ['#2f9bd6', 'PCAP'], pcapng: ['#2f9bd6', 'PCAP'] })[x] || ['#8b93b8', ''];
+    return '<svg viewBox="0 0 24 24"><path fill="#e9eaf2" d="M6 1.5h8.5L20 7v13.5A2 2 0 0 1 18 22.5H6a2 2 0 0 1-2-2v-17a2 2 0 0 1 2-2z"/>' +
+      '<path fill="#b8bccf" d="M14.5 1.5V7H20z"/>' +
+      (lbl ? '<rect x="2" y="12.5" width="' + (lbl.length > 3 ? 20 : 16) + '" height="7" rx="1.5" fill="' + col + '"/>' +
+             '<text x="' + (lbl.length > 3 ? 12 : 10) + '" y="18" text-anchor="middle" font-family="system-ui,sans-serif" font-size="5.4" font-weight="700" fill="#fff">' + lbl + '</text>'
+           : '<path stroke="' + col + '" stroke-width="1.4" d="M7.5 12h9M7.5 15h9M7.5 18h6"/>') + '</svg>';
+  }
+
+
+  function sortView() {
+    const k = sortKey, d = sortDir;
+    view = entries.slice().sort((a, b) => {
+      if (a.dir !== b.dir) return a.dir ? -1 : 1;             // folders first
+      let r = 0;
+      if (k === 'size') r = a.size - b.size;
+      else if (k === 'type') r = typeOf(a).localeCompare(typeOf(b));
+      if (!r) r = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+      return r * d;
+    });
+  }
+
+  function renderCrumbs() {
+    const c = $('tkCrumbs');
+    c.innerHTML = SVG_DRIVE;
+    const segs = cwd.split('/').filter(Boolean);
+    const wn = $('tkWinName');
+    if (wn) wn.innerHTML = (segs.length ? SVG_FOLDER : SVG_DRIVE) + '<span></span>', wn.lastChild.textContent = segs.length ? segs[segs.length - 1] : 'SD card';
+    const add = (label, path, isCur) => {
+      if (isCur) { const s = document.createElement('span'); s.className = 'cur'; s.textContent = label; c.appendChild(s); return; }
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = label;
+      b.onclick = () => navigate(path);
+      c.appendChild(b);
+    };
+    add('SD', '/', segs.length === 0);
+    segs.forEach((s, i) => {
+      const sep = document.createElement('span'); sep.className = 'sep'; sep.textContent = '›'; c.appendChild(sep);
+      add(s, '/' + segs.slice(0, i + 1).join('/'), i === segs.length - 1);
+    });
+  }
+
+  function cell(cls, text) { const s = document.createElement('span'); s.className = cls; s.textContent = text; return s; }
+  function nameCell(svg, name) {
+    const s = document.createElement('span'); s.className = 'nm'; s.innerHTML = svg;
+    const b = document.createElement('b'); b.textContent = name; s.appendChild(b); return s;
+  }
+
+  function renderList() {
+    sortView();
+    const list = $('tkFiles');
+    list.innerHTML = '';
+    const hd = document.createElement('div'); hd.className = 'tkFr hd';
+    const arrow = (k) => (sortKey === k ? (sortDir > 0 ? ' ▴' : ' ▾') : '');
+    hd.append(cell('nm', 'Name' + arrow('name')), cell('sz', 'Size' + arrow('size')), cell('ty', 'Type' + arrow('type')));
+    [['nm', 'name'], ['sz', 'size'], ['ty', 'type']].forEach(([cls, key]) => {
+      hd.querySelector('.' + cls).onclick = () => { if (sortKey === key) sortDir = -sortDir; else { sortKey = key; sortDir = 1; } renderList(); };
+    });
+    list.appendChild(hd);
+    if (cwd !== '/') {
+      const up = document.createElement('div'); up.className = 'tkFr';
+      up.append(nameCell(SVG_UP, '..'), cell('sz', ''), cell('ty', 'Parent folder'));
+      up.ondblclick = () => navigate(parentOf(cwd));
+      list.appendChild(up);
+    }
+    if (!view.length) {
+      const e = document.createElement('div'); e.className = 'tkFbEmpty';
+      e.textContent = 'This folder is empty. Drop files here to upload.';
+      list.appendChild(e);
+    }
+    view.forEach((it, idx) => {
+      const r = document.createElement('div');
+      r.className = 'tkFr' + (selected.has(it.path) ? ' sel' : '');
+      r.dataset.idx = idx;
+      r.title = it.path;
+      r.append(nameCell(iconOf(it), it.name), cell('sz', it.dir ? '—' : fmtSize(it.size)), cell('ty', typeOf(it)));
+      r.onclick = (ev) => onRowClick(ev, idx);
+      r.ondblclick = () => openItem(it);
+      list.appendChild(r);
+    });
+    updateToolbar();
+  }
+
+  function paintSelection() {
+    $('tkFiles').querySelectorAll('.tkFr[data-idx]').forEach((r) => {
+      r.classList.toggle('sel', selected.has(view[+r.dataset.idx].path));
+    });
+    updateToolbar();
+  }
+
+  function onRowClick(ev, idx) {
+    if (busy) return;
+    const p = view[idx].path;
+    if (ev.shiftKey && anchor >= 0) {
+      if (!(ev.ctrlKey || ev.metaKey)) selected.clear();
+      const a = Math.min(anchor, idx), b = Math.max(anchor, idx);
+      for (let i = a; i <= b; i++) selected.add(view[i].path);
+    } else if (ev.ctrlKey || ev.metaKey) {
+      if (selected.has(p)) selected.delete(p); else selected.add(p);
+      anchor = idx;
+    } else {
+      selected.clear(); selected.add(p); anchor = idx;
+    }
+    paintSelection();
+  }
+
+  const selectedFiles = () => view.filter((e) => !e.dir && selected.has(e.path));
+
+  function updateToolbar() {
+    const files = selectedFiles();
+    const anySel = view.some((e) => selected.has(e.path));
+    if ($('tkDlSel')) $('tkDlSel').disabled = busy || !files.length;
+    if ($('tkDelSel')) {
+      $('tkDelSel').disabled = busy || !files.length;
+      $('tkDelSel').title = anySel && !files.length ? 'Folders can’t be deleted from here' : 'Delete selected (Del)';
+    }
+    if ($('tkUp')) $('tkUp').disabled = busy || cwd === '/';
+    if ($('tkCfgSave')) $('tkCfgSave').disabled = busy || !cfgValid;   // never save a non-text config
+    const nd = view.filter((e) => e.dir).length, nf = view.length - nd;
+    let s = nd + ' folder' + (nd === 1 ? '' : 's') + ', ' + nf + ' file' + (nf === 1 ? '' : 's');
+    if (anySel) {
+      const bytes = files.reduce((t, e) => t + e.size, 0);
+      const n = view.filter((e) => selected.has(e.path)).length;
+      s += ' · ' + n + ' selected' + (files.length ? ' (' + fmtSize(bytes) + ')' : '');
+    }
+    if ($('tkFbStatus')) $('tkFbStatus').textContent = s;
+  }
 
   async function refreshFiles() {
     if (!connected) return;
-    const dir = $('tkFolder').value;
+    renderCrumbs();
     const list = $('tkFiles');
-    list.innerHTML = '<div class="muted">Listing ' + dir + '…</div>';
+    list.innerHTML = '';
+    const loading = document.createElement('div'); loading.className = 'tkFbEmpty';
+    loading.textContent = 'Loading ' + cwd + '…';
+    list.appendChild(loading);
     setBusy(true);
     try {
-      const { files } = await ls(dir);
-      files.sort((a, b) => a.path.localeCompare(b.path));
-      if (!files.length) { list.innerHTML = '<div class="muted">No files in ' + dir + '.</div>'; return; }
+      const { files, dirs } = await ls(cwd);
+      entries = dirs.map((p) => ({ path: p, name: baseName(p), dir: true, size: 0 }))
+        .concat(files.map((f) => ({ path: f.path, name: baseName(f.path), dir: false, size: f.size })));
+      const keep = new Set(entries.map((e) => e.path));
+      for (const p of [...selected]) if (!keep.has(p)) selected.delete(p);
+      setBusy(false);
+      renderList();
+    } catch (e) {
+      setBusy(false);
       list.innerHTML = '';
-      for (const f of files) {
-        const row = document.createElement('div');
-        row.className = 'tkFile';
-        const name = document.createElement('span'); name.className = 'tkName'; name.textContent = f.path;
-        const size = document.createElement('span'); size.className = 'tkSize'; size.textContent = fmtSize(f.size);
-        const dl = document.createElement('button'); dl.className = 'tkMini'; dl.textContent = 'Download';
-        dl.onclick = () => downloadFile(f);
-        const del = document.createElement('button'); del.className = 'tkMini danger'; del.textContent = 'Delete';
-        del.onclick = () => deleteFile(f);
-        row.append(name, size, dl, del);
-        list.appendChild(row);
-      }
-    } catch (e) { list.innerHTML = '<div class="tkStat bad">Error: ' + e.message + '</div>'; }
-    finally { setBusy(false); }
+      const d = document.createElement('div'); d.className = 'tkFbEmpty tkStat bad';
+      d.textContent = 'Could not open ' + cwd + ': ' + e.message;
+      list.appendChild(d);
+      updateToolbar();
+    }
   }
 
-  async function downloadFile(f) {
-    setBusy(true); log('GET ' + f.path + ' …');
+  function navigate(path) {
+    if (busy) return;
+    cwd = path || '/';
+    selected.clear(); anchor = -1;
+    refreshFiles();
+  }
+
+  function saveBytes(name, bytes) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  function fetchFile(it) {
+    return get(it.path, (r, t) => { $('tkStatus').textContent = 'reading ' + it.name + ' ' + fmtSize(r) + ' / ' + fmtSize(t); });
+  }
+
+  async function downloadItems(items) {
+    if (!items.length || busy) return;
+    setBusy(true);
     try {
-      const bytes = await get(f.path, (r, t) => { $('tkStatus').textContent = 'downloading ' + fmtSize(r) + ' / ' + fmtSize(t); });
-      const blob = new Blob([bytes], { type: 'application/octet-stream' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = f.path.split('/').pop();
-      a.click(); URL.revokeObjectURL(a.href);
-      $('tkStatus').textContent = 'downloaded ' + a.download + ' (' + fmtSize(bytes.length) + ')';
-      log('Saved ' + a.download + ' (' + bytes.length + ' B)');
+      for (const it of items) {
+        log('GET ' + it.path + ' …');
+        const bytes = await fetchFile(it);
+        saveBytes(it.name, bytes);
+        log('Saved ' + it.name + ' (' + bytes.length + ' B)');
+      }
+      $('tkStatus').textContent = 'downloaded ' + items.length + ' file' + (items.length === 1 ? '' : 's');
     } catch (e) { log('GET failed: ' + e.message); $('tkStatus').textContent = 'download failed: ' + e.message; }
     finally { setBusy(false); }
   }
 
-  async function deleteFile(f) {
-    if (!confirm('Delete ' + f.path + ' from the SD card? This cannot be undone.')) return;
+  let pvBytes = null, pvName = '';
+  async function previewItem(it) {
     setBusy(true);
-    try { await rm(f.path); log('Deleted ' + f.path); await refreshFiles(); }
-    catch (e) { log('RM failed: ' + e.message); alert('Delete failed: ' + e.message); setBusy(false); }
+    try {
+      const bytes = await fetchFile(it);
+      pvBytes = bytes; pvName = it.name;
+      $('tkPvTitle').textContent = it.path + '  (' + fmtSize(bytes.length) + ')';
+      $('tkPvBody').textContent = new TextDecoder().decode(bytes);
+      $('tkPreview').style.display = '';
+      $('tkStatus').textContent = 'previewing ' + it.name;
+    } catch (e) { log('GET failed: ' + e.message); $('tkStatus').textContent = 'preview failed: ' + e.message; }
+    finally { setBusy(false); }
+  }
+  function closePreview() { $('tkPreview').style.display = 'none'; pvBytes = null; $('tkFiles').focus(); }
+
+  function openItem(it) {
+    if (busy) return;
+    if (it.dir) { navigate(it.path); return; }
+    if (TEXT_EXT.includes(extOf(it.name)) && it.size <= PREVIEW_MAX) { previewItem(it); return; }
+    downloadItems([it]);
+  }
+
+  async function deleteSelected() {
+    const files = selectedFiles();
+    if (!files.length || busy) return;
+    const what = files.length === 1 ? files[0].path : files.length + ' files';
+    if (!confirm('Permanently delete ' + what + ' from the SD card?\nThis cannot be undone.')) return;
+    setBusy(true);
+    let failed = 0;
+    for (const f of files) {
+      try { await rm(f.path); log('Deleted ' + f.path); selected.delete(f.path); }
+      catch (e) { failed++; log('RM failed ' + f.path + ': ' + e.message); }
+    }
+    setBusy(false);
+    if (failed) alert(failed + ' file(s) could not be deleted — see the log.');
+    refreshFiles();
   }
 
   async function uploadFiles(fileList) {
-    if (!fileList || !fileList.length) return;
-    const folder = $('tkUploadFolder').value;
+    const list = Array.from(fileList || []);
+    if (!list.length || busy) return;
+    const clash = list.filter((f) => entries.some((e) => !e.dir && e.name === f.name)).map((f) => f.name);
+    if (clash.length && !confirm('Replace existing file' + (clash.length > 1 ? 's' : '') + ' in ' + cwd + '?\n' + clash.join('\n'))) return;
     setBusy(true);
     try {
-      for (const file of fileList) {
+      for (const file of list) {
         const bytes = new Uint8Array(await file.arrayBuffer());
-        const path = (folder === '/' ? '' : folder) + '/' + file.name;
+        const path = joinPath(cwd, file.name);
         log('PUT ' + path + ' (' + bytes.length + ' B) …');
-        await put(path, bytes, (s, t) => { $('tkStatus').textContent = 'uploading ' + file.name + ' ' + fmtSize(s) + '/' + fmtSize(t); });
+        await put(path, bytes, (s, t) => { $('tkStatus').textContent = 'uploading ' + file.name + ' ' + fmtSize(s) + ' / ' + fmtSize(t); });
         log('Uploaded ' + path);
       }
-      $('tkStatus').textContent = 'upload complete';
-      await refreshFiles();
-    } catch (e) { log('PUT failed: ' + e.message); alert('Upload failed: ' + e.message); setBusy(false); }
+      $('tkStatus').textContent = 'uploaded ' + list.length + ' file' + (list.length === 1 ? '' : 's') + ' to ' + cwd;
+    } catch (e) { log('PUT failed: ' + e.message); alert('Upload failed: ' + e.message); }
+    finally { setBusy(false); }
+    refreshFiles();
+  }
+
+  function onListKey(ev) {
+    if (busy || $('tkPreview').style.display === '') return;
+    const k = ev.key;
+    if ((ev.ctrlKey || ev.metaKey) && k.toLowerCase() === 'a') {
+      ev.preventDefault(); view.forEach((e) => selected.add(e.path)); paintSelection();
+    } else if (k === 'Delete') {
+      ev.preventDefault(); deleteSelected();
+    } else if (k === 'Backspace') {
+      ev.preventDefault(); if (cwd !== '/') navigate(parentOf(cwd));
+    } else if (k === 'Enter') {
+      const sel = view.filter((e) => selected.has(e.path));
+      if (sel.length === 1) { ev.preventDefault(); openItem(sel[0]); }
+    } else if (k === 'ArrowDown' || k === 'ArrowUp') {
+      if (!view.length) return;
+      ev.preventDefault();
+      const cur = anchor >= 0 ? anchor : (k === 'ArrowDown' ? -1 : view.length);
+      const next = Math.max(0, Math.min(view.length - 1, cur + (k === 'ArrowDown' ? 1 : -1)));
+      if (!ev.shiftKey) selected.clear();
+      selected.add(view[next].path); anchor = next;
+      paintSelection();
+      const row = $('tkFiles').querySelector('.tkFr[data-idx="' + next + '"]');
+      if (row) row.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function initBrowser() {
+    $('tkUp').onclick = () => navigate(parentOf(cwd));
+    $('tkRefresh').onclick = refreshFiles;
+    $('tkUploadBtn').onclick = () => $('tkUploadInput').click();
+    $('tkUploadInput').onchange = (e) => { uploadFiles(e.target.files); e.target.value = ''; };
+    $('tkDlSel').onclick = () => downloadItems(selectedFiles());
+    $('tkDelSel').onclick = deleteSelected;
+    const list = $('tkFiles');
+    list.addEventListener('keydown', onListKey);
+    list.addEventListener('click', (ev) => { if (ev.target === list) { selected.clear(); anchor = -1; paintSelection(); } });
+    list.addEventListener('dragover', (ev) => { if (!connected || busy) return; ev.preventDefault(); list.classList.add('drop'); });
+    list.addEventListener('dragleave', () => list.classList.remove('drop'));
+    list.addEventListener('drop', (ev) => { ev.preventDefault(); list.classList.remove('drop'); if (connected && !busy) uploadFiles(ev.dataTransfer.files); });
+    $('tkPvClose').onclick = closePreview;
+    $('tkPvDl').onclick = () => { if (pvBytes) saveBytes(pvName, pvBytes); };
+    $('tkPreview').addEventListener('click', (ev) => { if (ev.target === $('tkPreview')) closePreview(); });
+    document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && $('tkPreview').style.display === '') closePreview(); });
   }
 
   // ---- wardriver.cfg editor (form + raw) ----
@@ -370,7 +625,21 @@
     { k: 'rotateScreen180',   label: 'Rotate screen 180°',    type: 'bool' }
   ];
 
-  let cfgRaw = '';
+  let cfgRaw = '';               // whole file text (keeps comments + unknown keys)
+  let cfgValid = false;          // false when the card's file isn't readable text
+
+  // A real wardriver.cfg is plain key=value text. Refuse anything else so the
+  // editor can never write binary junk back over a config.
+  function looksLikeConfig(bytes) {
+    if (!bytes.length) return true;
+    let printable = 0;
+    for (const b of bytes) {
+      if (b === 0) return false;
+      if ((b >= 32 && b < 127) || b === 9 || b === 10 || b === 13 || b >= 0xC2) printable++;
+    }
+    if (printable / bytes.length < 0.95) return false;
+    return /^\s*[A-Za-z][A-Za-z0-9_]*\s*=/m.test(new TextDecoder().decode(bytes));
+  }
 
   function cfgReadKey(text, key) {
     const m = text.match(new RegExp('^\\s*' + key + '\\s*=\\s*(.*)$', 'm'));
@@ -393,16 +662,16 @@
       if (f.type === 'bool') {
         input = document.createElement('input'); input.type = 'checkbox';
         input.checked = (cur === 'true' || cur === '1');
-        input.onchange = () => { cfgRaw = cfgSetKey(cfgRaw, f.k, input.checked ? 'true' : 'false'); $('tkCfgRaw').value = cfgRaw; };
+        input.onchange = () => { cfgRaw = cfgSetKey(cfgRaw, f.k, input.checked ? 'true' : 'false'); };
         wrap.classList.add('bool');
       } else if (f.type === 'select') {
         input = document.createElement('select');
         for (const o of f.opts) { const op = document.createElement('option'); op.value = o; op.textContent = o; input.appendChild(op); }
         if (cur != null) input.value = cur;
-        input.onchange = () => { cfgRaw = cfgSetKey(cfgRaw, f.k, input.value); $('tkCfgRaw').value = cfgRaw; };
+        input.onchange = () => { cfgRaw = cfgSetKey(cfgRaw, f.k, input.value); };
       } else {
         input = document.createElement('input'); input.type = 'text'; input.value = cur != null ? cur : '';
-        input.oninput = () => { cfgRaw = cfgSetKey(cfgRaw, f.k, input.value); $('tkCfgRaw').value = cfgRaw; };
+        input.oninput = () => { cfgRaw = cfgSetKey(cfgRaw, f.k, input.value); };
       }
       wrap.append(lbl, input);
       form.appendChild(wrap);
@@ -410,21 +679,37 @@
   }
 
   async function loadCfg() {
-    setBusy(true); $('tkStatus').textContent = 'loading wardriver.cfg…';
+    setBusy(true); $('tkStatus').textContent = 'loading wardriver.cfg\u2026';
+    const note = $('tkCfgNote');
     try {
-      const bytes = await cfgGet();
-      cfgRaw = new TextDecoder().decode(bytes);
-      $('tkCfgRaw').value = cfgRaw;
-      renderCfgForm();
+      let bytes;
+      try { bytes = await cfgGet(); }
+      catch (e) {
+        if (!/open/i.test(e.message)) throw e;
+        bytes = new Uint8Array(0);           // no file on the card yet: saving creates it
+        note.textContent = 'No wardriver.cfg on the card yet \u2014 Save will create one.';
+      }
+      cfgValid = looksLikeConfig(bytes);
+      cfgRaw = cfgValid ? new TextDecoder().decode(bytes) : '';
       $('tkCfgPanel').style.display = '';
+      if (!cfgValid) {
+        $('tkCfgForm').innerHTML = '';
+        note.className = 'tkCfgNote bad';
+        note.textContent = 'The wardriver.cfg on the card is not readable text (' + bytes.length +
+          ' B of binary data), so it can\u2019t be edited here. Saving is disabled to avoid overwriting it.';
+        log('CFG GET: file is not text (' + bytes.length + ' B) \u2014 editing disabled');
+        $('tkStatus').textContent = 'wardriver.cfg is not readable text';
+        return;
+      }
+      if (bytes.length) { note.className = 'tkCfgNote'; note.textContent = ''; }
+      renderCfgForm();
       $('tkStatus').textContent = 'wardriver.cfg loaded (' + bytes.length + ' B)';
     } catch (e) { log('CFG GET failed: ' + e.message); $('tkStatus').textContent = 'config load failed: ' + e.message; }
-    finally { setBusy(false); }
+    finally { setBusy(false); $('tkCfgSave').disabled = busy || !cfgValid; }
   }
 
   async function saveCfg() {
-    // raw textarea is authoritative on save
-    cfgRaw = $('tkCfgRaw').value;
+    if (!cfgValid) { alert('The config on the card isn\u2019t readable text, so saving is disabled.'); return; }
     const bytes = enc.encode(cfgRaw);
     if (!confirm('Write wardriver.cfg to the SD card and reload it on the device?')) return;
     setBusy(true); $('tkStatus').textContent = 'saving wardriver.cfg…';
@@ -441,14 +726,9 @@
   function init() {
     if (!$('tkConnect')) return;
     $('tkConnect').onclick = () => (connected ? disconnect() : connect());
-    $('tkRefresh').onclick = refreshFiles;
-    $('tkFolder').onchange = refreshFiles;
-    $('tkUploadBtn').onclick = () => $('tkUploadInput').click();
-    $('tkUploadInput').onchange = (e) => { uploadFiles(e.target.files); e.target.value = ''; };
+    initBrowser();
     $('tkCfgLoad').onclick = loadCfg;
     $('tkCfgSave').onclick = saveCfg;
-    $('tkCfgTabForm').onclick = () => { $('tkCfgForm').style.display = ''; $('tkCfgRawWrap').style.display = 'none'; $('tkCfgTabForm').classList.add('on'); $('tkCfgTabRaw').classList.remove('on'); renderCfgForm(); };
-    $('tkCfgTabRaw').onclick  = () => { cfgRaw = $('tkCfgRaw').value; $('tkCfgForm').style.display = 'none'; $('tkCfgRawWrap').style.display = ''; $('tkCfgTabRaw').classList.add('on'); $('tkCfgTabForm').classList.remove('on'); };
     navigator.serial.addEventListener('disconnect', (e) => { if (port && e.target === port) disconnect(); });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
