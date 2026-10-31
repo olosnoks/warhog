@@ -27,6 +27,11 @@ the base firmware history.
   RAM, the largest internal block, the largest DMA-capable block and free PSRAM.
 - **Other boards:** the Toolkit GET on the XIAO C5, T-Dongle C5 and Waveshare C6
   now uses the same POSIX read into an internal DMA buffer.
+- **XIAO C5: Toolkit recovers a wedged SD bus.** After a long run the C5's
+  SD/SPI bus can wedge, so the card lists as empty and every file open fails.
+  The Toolkit showed an empty card and "no wardriver.cfg". Session start, LS and
+  GET now detect this and remount with `sdTryRecover()` before retrying, the
+  same way the uploader already did.
 
 ### Piglet Toolkit (USB) + firmware attached to GitHub Releases
 - **Piglet Toolkit on the web flasher.** Connect over the same USB cable used for
@@ -58,6 +63,11 @@ the base firmware history.
   like a text editor: line numbers, wrapped long lines, dimmed `#` comments,
   highlighted `[sections]` and `key=value` pairs. Non-text bytes are shown as
   faint dots instead of replacement glyphs.
+- **Download whole folders.** Select one or more folders, or a mix of folders and
+  files, and Download saves a single `.zip` with the folder structure kept,
+  including subfolders and empty folders. It is built in the browser, with
+  progress in the status bar and a confirmation above 25 MB. A single selected
+  file still downloads as itself.
 - **Config editor: form only.** Removed the Raw tab; the form still edits the file
   text in place so comments and unknown keys survive. Save is now refused when the
   card's `wardriver.cfg` isn't readable text, so binary data can never be written

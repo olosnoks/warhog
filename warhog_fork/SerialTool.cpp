@@ -160,11 +160,15 @@ static void cmdGetPath(const char* path) {
   if (!sdOk) { Serial.println("WT ERR nosd"); return; }
   sdLogFlushNow();
   String full = String(SD.mountpoint()) + path;
-  spiBusLock();
-  int fd = ::open(full.c_str(), O_RDONLY);
   struct stat st;
-  if (fd >= 0 && (fstat(fd, &st) != 0 || S_ISDIR(st.st_mode))) { ::close(fd); fd = -1; }
-  spiBusUnlock();
+  int fd = -1;
+  for (int attempt = 0; attempt < 2 && fd < 0; attempt++) {
+    if (attempt == 1 && !sdTryRecover()) break;    // wedged bus: remount, try once more
+    spiBusLock();
+    fd = ::open(full.c_str(), O_RDONLY);
+    if (fd >= 0 && (fstat(fd, &st) != 0 || S_ISDIR(st.st_mode))) { ::close(fd); fd = -1; }
+    spiBusUnlock();
+  }
   if (fd < 0) { Serial.println("WT ERR open"); return; }
   Serial.printf("WT BEGIN %lu\n", (unsigned long)st.st_size);
   char     b64[520];
@@ -187,14 +191,20 @@ static void cmdGetPath(const char* path) {
   Serial.printf("WT END %08lX\n", (unsigned long)(acc ^ 0xFFFFFFFFu));
 }
 
-static void cmdLs(const char* dir) {
-  if (!sdOk) { Serial.println("WT ERR nosd"); return; }
-  if (!*dir) dir = "/";
+// After long runs the C5's SD/SPI bus can wedge: SD.open("/") still "works"
+// but lists nothing and every file open fails, so the Toolkit showed an empty
+// card. sdTryRecover() (SDUtils) remounts; the Toolkit commands now use it the
+// same way the uploader does.
+
+// Print one directory's entries. Returns the entry count, or -1 if the
+// directory could not be opened. Prints no WT END / WT ERR.
+static int lsOnce(const char* dir) {
   spiBusLock();
   File root = SD.open(dir);
   bool isDir = root && root.isDirectory();
   spiBusUnlock();
-  if (!isDir) { if (root) { spiBusLock(); root.close(); spiBusUnlock(); } Serial.println("WT ERR nodir"); return; }
+  if (!isDir) { if (root) { spiBusLock(); root.close(); spiBusUnlock(); } return -1; }
+  int count = 0;
   while (true) {
     spiBusLock();
     File f = root.openNextFile();
@@ -206,10 +216,32 @@ static void cmdLs(const char* dir) {
     spiBusLock(); f.close(); spiBusUnlock();
     if (d) Serial.printf("WT DIR %s\n", p.c_str());
     else   Serial.printf("WT F %lu %s\n", (unsigned long)sz, p.c_str());
+    count++;
     yield();
   }
   spiBusLock(); root.close(); spiBusUnlock();
-  Serial.println("WT END");
+  return count;
+}
+
+// True when the card root can't be opened or lists nothing -- the wedged-bus
+// signature (a real card always has at least wardriver.cfg or /logs).
+static bool sdLooksWedged() {
+  spiBusLock();
+  File root = SD.open("/");
+  bool ok = root && root.isDirectory();
+  bool any = false;
+  if (ok) { File f = root.openNextFile(); any = (bool)f; if (f) f.close(); }
+  if (root) root.close();
+  spiBusUnlock();
+  return !ok || !any;
+}
+
+static void cmdLs(const char* dir) {
+  if (!sdOk) { Serial.println("WT ERR nosd"); return; }
+  if (!*dir) dir = "/";
+  int n = lsOnce(dir);
+  if ((n < 0 || (n == 0 && !strcmp(dir, "/"))) && sdTryRecover()) n = lsOnce(dir);
+  Serial.println(n < 0 ? "WT ERR nodir" : "WT END");
 }
 
 static void cmdRm(const char* path) {
@@ -249,7 +281,11 @@ bool serialToolHandleLine(const char* line) {
     putCleanup(true);
   }
 
-  if      (!strcmp(verb, "HELLO")) { s_active = true; Serial.printf("WT HELLO fw=%s model=%s proto=1\n", FIRMWARE_VERSION, cfg.board.c_str()); }
+  if      (!strcmp(verb, "HELLO")) {
+    s_active = true;
+    if (sdOk && sdLooksWedged()) sdTryRecover();   // fresh session: clear a wedged bus up front
+    Serial.printf("WT HELLO fw=%s model=%s proto=1\n", FIRMWARE_VERSION, cfg.board.c_str());
+  }
   else if (!strcmp(verb, "LS"))    cmdLs(args);
   else if (!strcmp(verb, "GET"))   cmdGetPath(args);
   else if (!strcmp(verb, "PUT"))   cmdPutFile(args);
