@@ -46,7 +46,10 @@
   }
 
   // ---- serial connection + line reader ----
-  let port = null, writer = null, reader = null, readLoopRunning = false;
+  let port = null, writer = null, reader = null;
+  let readDone = null;            // promise of the running readLoop()
+  let readRestarts = 0;           // consecutive restarts without data (capped)
+  let closing = false;            // true while disconnect() tears down
   let lineHandler = null;         // current op's line handler, or null
   let buf = '';                   // text accumulator for line framing
 
@@ -56,32 +59,43 @@
     el.textContent += msg + '\n';
     el.scrollTop = el.scrollHeight;
   }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const withTimeout = (p, ms) => Promise.race([p, sleep(ms).then(() => { throw new Error('timeout'); })]);
 
+  // One reader for the session. On end/error it EXITS — it never re-acquires a
+  // reader in a tight loop (a failing read that rejects instantly would otherwise
+  // spin on microtasks and freeze the tab, e.g. while the board reboots).
   async function readLoop() {
     const dec = new TextDecoder();
-    readLoopRunning = true;
+    let restart = false;
     try {
-      while (port && port.readable) {
-        reader = port.readable.getReader();
-        try {
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buf += dec.decode(value, { stream: true });
-            let nl;
-            while ((nl = buf.indexOf('\n')) >= 0) {
-              let line = buf.slice(0, nl).replace(/\r$/, '');
-              buf = buf.slice(nl + 1);
-              if (line.startsWith('WT ') || line === 'WT') {
-                if (lineHandler) lineHandler(line);
-              }
-              // non-WT lines are firmware debug output -> ignore
-            }
-          }
-        } catch (e) { /* reader cancelled on disconnect */ }
-        finally { try { reader.releaseLock(); } catch (e) {} reader = null; }
+      reader = port.readable.getReader();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        readRestarts = 0;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).replace(/\r$/, '');
+          buf = buf.slice(nl + 1);
+          if ((line.startsWith('WT ') || line === 'WT') && lineHandler) lineHandler(line);
+          // non-WT lines are firmware debug output -> ignore
+        }
+        if (buf.length > 65536) buf = buf.slice(-4096);   // newline-less flood guard
       }
-    } finally { readLoopRunning = false; }
+    } catch (e) {
+      // Non-fatal errors (e.g. buffer overrun from a boot-log burst) leave a fresh
+      // port.readable behind: restart once via a macrotask, never synchronously.
+      if (!closing && port && port.readable && ++readRestarts <= 5) restart = true;
+      else if (!closing) log('Serial read stopped: ' + e.message);
+    } finally {
+      try { reader.releaseLock(); } catch (e) {}
+      reader = null;
+    }
+    if (closing) return;
+    if (restart) { await sleep(100); if (!closing && port && port.readable) { readDone = readLoop(); return; } }
+    if (connected) { log('Piglet disconnected.'); disconnect(); }   // port died under us
   }
 
   async function writeLine(s) {
@@ -105,12 +119,26 @@
   }
 
   // ---- protocol commands ----
-  async function hello() {
-    return op(() => writeLine('WT HELLO'), (done, fail) => (line) => {
-      if (line.startsWith('WT HELLO')) done(line.slice(3).trim());
-    }, 5000);
+  // Opening the port can glitch the USB control lines and reset the board, so keep
+  // re-sending HELLO (once a second) until the firmware has booted and answers.
+  function hello(totalMs) {
+    return new Promise((resolve, reject) => {
+      const deadline = Date.now() + (totalMs || 15000);
+      let finished = false, iv = null;
+      const finish = (fn) => { if (finished) return; finished = true; clearInterval(iv); lineHandler = null; fn(); };
+      lineHandler = (line) => { if (line.startsWith('WT HELLO')) finish(() => resolve(line.slice(3).trim())); };
+      const send = () => {
+        if (finished) return;
+        if (Date.now() > deadline || closing || !writer) {
+          finish(() => reject(new Error('no reply from the Piglet — flash the latest firmware (it adds the toolkit protocol), then try again')));
+          return;
+        }
+        writeLine('WT HELLO').catch(() => {});
+      };
+      iv = setInterval(send, 1000);
+      send();
+    });
   }
-  async function bye() { try { await writeLine('WT BYE'); } catch (e) {} }
 
   async function ls(dir) {
     const files = [], dirs = [];
@@ -187,13 +215,25 @@
   let connected = false, busy = false;
   function setBusy(b) { busy = b; document.querySelectorAll('#tkPanel button, #tkPanel select, #tkPanel input').forEach(e => { e.disabled = b; }); }
 
+  let connecting = false;
   async function connect() {
+    if (connecting) return;
+    connecting = true;
+    $('tkConnect').disabled = true;
     try {
       port = await navigator.serial.requestPort();
-      await port.open({ baudRate: 115200 });   // native USB-CDC ignores baud
+      await port.open({ baudRate: 115200, bufferSize: 65536 });   // native USB-CDC ignores baud
+      // On the ESP32 USB-Serial/JTAG, RTS-high + DTR-low resets the chip. Drive both
+      // lines to the idle "run" state, dropping RTS FIRST so we never pass through
+      // the reset combination (open() itself may already have glitched them).
+      try { await port.setSignals({ requestToSend: false }); await port.setSignals({ dataTerminalReady: false }); } catch (e) {}
+      closing = false;
+      readRestarts = 0;
       writer = port.writable.getWriter();
-      readLoop();
-      const info = await hello();
+      readDone = readLoop();
+      $('tkStatus').textContent = 'waiting for the Piglet to answer…';
+      $('tkStatus').className = 'tkStat';
+      const info = await hello(15000);
       connected = true;
       $('tkConnect').textContent = 'Disconnect';
       $('tkStatus').textContent = 'connected · ' + info;
@@ -202,21 +242,33 @@
       log('Connected: ' + info);
       await refreshFiles();
     } catch (e) {
-      log('Connect failed: ' + e.message);
-      $('tkStatus').textContent = e.message.includes('No port') ? 'no port selected' : ('error: ' + e.message);
-      $('tkStatus').className = 'tkStat bad';
+      const msg = e && e.message ? e.message : String(e);
+      log('Connect failed: ' + msg);
       await disconnect();
+      $('tkStatus').textContent = /No port/i.test(msg) ? 'no port selected' : ('error: ' + msg);
+      $('tkStatus').className = 'tkStat bad';
+    } finally {
+      connecting = false;
+      $('tkConnect').disabled = false;
     }
   }
 
+  // Tear down in a fixed order with a timeout on every step, so a dead or
+  // rebooting device can never leave the page hanging.
   async function disconnect() {
-    try { if (connected) await bye(); } catch (e) {}
+    if (closing) return;
+    closing = true;
+    const wasConnected = connected;
     connected = false;
-    try { if (reader) await reader.cancel(); } catch (e) {}
-    try { if (writer) { writer.releaseLock(); } } catch (e) {}
+    lineHandler = null;
+    if (wasConnected && writer) { try { await withTimeout(writer.write(enc.encode('WT BYE\n')), 500); } catch (e) {} }
+    try { if (reader) await withTimeout(reader.cancel(), 1000); } catch (e) {}
+    try { if (readDone) await withTimeout(readDone, 1000); } catch (e) {}
+    try { if (writer) writer.releaseLock(); } catch (e) {}
     writer = null;
-    try { if (port) await port.close(); } catch (e) {}
-    port = null; lineHandler = null; buf = '';
+    try { if (port) await withTimeout(port.close(), 1500); } catch (e) {}
+    port = null; readDone = null; buf = '';
+    closing = false;
     $('tkConnect').textContent = 'Connect over USB';
     $('tkStatus').textContent = 'disconnected';
     $('tkStatus').className = 'tkStat';

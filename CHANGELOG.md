@@ -18,6 +18,14 @@ the base firmware history.
   the flasher serves.
 - Fixed a CYD/W550 build break: `SerialTool.cpp` included `<SD.h>` on top of
   `StorageCompat.h`'s `SD`→`SD_MMC` remap.
+- **Toolkit connect fixes.** Connecting no longer freezes the page: the serial read
+  loop re-acquired a reader in a tight microtask loop when reads failed (e.g. while
+  the board rebooted), starving the tab. It now exits cleanly, caps restarts, and
+  tears down with timeouts. After opening the port it drives RTS low before DTR
+  (RTS-high/DTR-low resets ESP32 USB-Serial/JTAG boards), and the handshake retries
+  `WT HELLO` for 15 s so a board that reset on open can finish booting. Boards on
+  firmware without the toolkit protocol now get a clear "flash the latest firmware"
+  message instead of a hang.
 
 ### Batched, PSRAM-backed SD logging + `/archived` folder
 - **CSV rows are buffered and written to SD in batches of 100** instead of one
