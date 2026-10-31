@@ -26,6 +26,15 @@ Rows are written to `/logs/WiGLE_<rand>_<id>.csv` with the standard WiGLE header
 - Path safety: `normalizeSdPath`, `isAllowedDataPath`, and `moveToUploaded` keep writes and
   post-upload archival inside the allowed `/logs` and `/uploaded` trees.
 
+### SD bus recovery (Guition W550)
+After sustained heavy SPI SD I/O the bus can wedge, so `SD.open()`/`SD.exists()` fail even
+though the card is intact. On the **Guition W550** (SPI SD), `sdBeginBestClock()` mounts at
+the fastest stable clock on a descending ladder (20→16→12→8→4→1 MHz) and `sdTryRecover()`
+unmounts + remounts one rung slower (rate-limited to once per 4 s, never below 4 MHz, until
+reboot). Recovery is invoked on `openLogFile()` open-failure and on a `moveToFolder()`
+"source missing". Ported from the XIAO C5 Core. On the **Freenove CYD** (4-bit SD_MMC) both
+are currently no-ops (`sdTryRecover()` returns false) — an SD_MMC recovery variant is TODO.
+
 ### SD card format
 64 GB cards usually ship **exFAT**, but the ESP32 SD stack wants **FAT32** — if logging
 silently fails, check the format first. On the CYD the SD is 4-bit SDIO; on the Guition/C5

@@ -3,9 +3,72 @@
 #include "esp_heap_caps.h"   // heap_caps_malloc — batch buffer in PSRAM when present
 #include "esp_attr.h"        // DMA_ATTR (SdReader bounce buffer)
 #include "SpiBusLock.h"
+#include "BoardPins.h"       // BoardPins::SD_CS (W550 SPI SD bus recovery)
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+
+// ---- SD bus recovery ----
+// Ported from the XIAO C5 Core (warhog_fork/SDUtils.cpp). After sustained heavy
+// SD I/O the SPI bus can wedge, so SD.open()/SD.exists() fail even though the
+// card is fine. sdBeginBestClock() mounts at the fastest stable clock on a
+// descending ladder; sdTryRecover() unmounts + remounts one rung slower.
+// W550 only (real SPI SD). On the Freenove SD_MMC build these are safe no-ops
+// (sdTryRecover() returns false) so shared call sites behave exactly as before
+// until an SD_MMC recovery variant lands.
+#if defined(BOARD_W550)
+extern SPIClass sdSpi;   // defined in main.cpp
+
+static const uint32_t kLadder[] = {
+  20000000, 16000000, 12000000, 8000000, 4000000, 1000000
+};
+static uint32_t sdRunHz    = 0;   // clock the card mounted at
+static uint32_t sdDynCapHz = 0;   // lowered by sdTryRecover() when the bus proves flaky
+static uint32_t sdLastRecoverMs = 0;
+
+bool sdBeginBestClock(uint8_t csPin) {
+  uint32_t capHz = 20000000;   // CYD config has no sdMaxSpiHz; cap at the board default
+  if (sdDynCapHz && sdDynCapHz < capHz) capHz = sdDynCapHz;
+
+  for (size_t i = 0; i < sizeof(kLadder) / sizeof(kLadder[0]); i++) {
+    uint32_t hz = kLadder[i];
+    if (hz > capHz) continue;
+    if (SD.begin(csPin, sdSpi, hz)) {
+      Serial.printf("[SD] Running at %lu Hz\n", (unsigned long)hz);
+      sdRunHz = hz;
+      return true;
+    }
+    SD.end();
+  }
+  return false;
+}
+
+bool sdTryRecover() {
+  uint32_t now = millis();
+  if (now - sdLastRecoverMs < 4000) return false;   // rate-limit: don't hammer a dead card
+  sdLastRecoverMs = now;
+
+  // A wedge means the mounted clock isn't reliable here: remount one rung
+  // slower (never below 4 MHz). Lasts until reboot.
+  for (size_t i = 0; i + 1 < sizeof(kLadder) / sizeof(kLadder[0]); i++) {
+    if (sdRunHz && kLadder[i] <= sdRunHz) {
+      if (kLadder[i + 1] >= 4000000) sdDynCapHz = kLadder[i + 1];
+      break;
+    }
+  }
+  Serial.printf("[SD] Attempting SD bus recovery (SD.end + reinit, cap %lu Hz)...\n",
+                (unsigned long)sdDynCapHz);
+  SD.end();
+  delay(50);
+  bool ok = sdBeginBestClock(BoardPins::SD_CS);
+  sdOk = ok;
+  Serial.printf("[SD] Recovery %s\n", ok ? "OK" : "FAILED");
+  return ok;
+}
+#else
+bool sdBeginBestClock(uint8_t /*csPin*/) { return false; }   // SD_MMC variant TODO
+bool sdTryRecover() { return false; }
+#endif
 
 // ---- Path helpers ----
 
@@ -63,8 +126,12 @@ bool isAllowedDataPath(const String& p) {
 static bool moveToFolder(const String& srcPath, const char* destDir) {
   if (!sdOk) return false;
   if (!SD.exists(srcPath)) {
-    Serial.printf("[SD] moveToFolder: source missing: %s\n", srcPath.c_str());
-    return false;
+    // A wedged bus can make a present file look missing — remount and recheck
+    // once (no-op on the SD_MMC build, so behaviour there is unchanged).
+    if (!sdTryRecover() || !SD.exists(srcPath)) {
+      Serial.printf("[SD] moveToFolder: source missing: %s\n", srcPath.c_str());
+      return false;
+    }
   }
 
   // Ensure folder exists
@@ -241,6 +308,9 @@ bool openLogFile() {
   Serial.println(currentCsvPath);
 
   logFile = SD.open(currentCsvPath, FILE_WRITE);
+  if (!logFile && sdTryRecover()) {       // wedged bus: remount once, then retry
+    logFile = SD.open(currentCsvPath, FILE_WRITE);
+  }
   if (!logFile) {
     Serial.println("[SD] Failed to open log file for write");
     return false;

@@ -34,13 +34,14 @@
 
 #if defined(BOARD_W550)
 #include <SPI.h>
-static SPIClass sdSpi(HSPI);
+SPIClass sdSpi(HSPI);   // non-static: sdTryRecover() (SDUtils.cpp) remounts on this instance
 
 static bool initSd() {
   // Guition JC8048W550: onboard TF slot wired for SPI on GPIO 10/11/12/13.
   sdSpi.begin(BoardPins::SD_SCK, BoardPins::SD_MISO, BoardPins::SD_MOSI, BoardPins::SD_CS);
 
-  if (!SD.begin(BoardPins::SD_CS, sdSpi, 20000000)) {
+  // Mount at the fastest stable clock; a later wedge is cleared by sdTryRecover().
+  if (!sdBeginBestClock(BoardPins::SD_CS)) {
     Serial.println("[SD] SD (SPI) mount failed");
     return false;
   }

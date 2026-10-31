@@ -3,6 +3,14 @@
 
 bool   openLogFile();
 void   closeLogFile();
+
+// ---- SD bus recovery (Guition W550 SPI SD) ----
+// sdBeginBestClock() mounts the card at the fastest stable clock on a ladder;
+// sdTryRecover() remounts a wedged bus one rung slower. On the Freenove SD_MMC
+// build both are no-ops (sdTryRecover() returns false) until an SD_MMC variant
+// lands, so callers can invoke them unconditionally.
+bool   sdBeginBestClock(uint8_t csPin);
+bool   sdTryRecover();
 // Time-based safety flush for the batched CSV writer — call every loop().
 // Writes out buffered rows that have waited longer than the flush window so a
 // partial batch is never lost on power-off.
