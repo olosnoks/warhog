@@ -7,6 +7,18 @@ the base firmware history.
 
 ## Unreleased
 
+### Correct the "shared SD+TFT SPI bus" claim
+- **Neither S3 board shares an SPI bus between its SD card and its TFT**, but
+  comments and docs throughout said the Freenove S3 CYD did. In fact the
+  Freenove drives its ILI9341 on SPI 10–13 and its SD card over 4-bit SDIO
+  (38–48), and the Guition W550 has an RGB panel with SD on SPI 10–13. Rewrote
+  `SpiBusLock.h`, the call-site comments (`MeshNode.cpp`, `Config.cpp`,
+  `SDUtils.cpp`, `ScreenUI.cpp`), `platformio.ini`, `scheduler/` docs and the
+  wiki to describe what the mutex really does: a **cross-core SD lock** that
+  keeps core-1 SD users (upload file moves, config/profile writes) from
+  interleaving with the core-0 `tStore` task. The lock in `ScreenUI::present()`
+  is now documented as defensive only. Comments only; no code change.
+
 ### Docs sync
 - Brought the documentation up to date with the current code: added `scheduler/`
   and `common/` to the README directory map, corrected the host-test count

@@ -2,7 +2,7 @@
 #include "SDUtils.h"   // SdReader
 #include "Globals.h"
 #include "StorageCompat.h"
-#include "SpiBusLock.h"   // CYD: SD + TFT share one SPI bus; serialize config writes in Core mode
+#include "SpiBusLock.h"   // serialize config writes against the core-0 SD-log task in Core mode
 #include <ArduinoJson.h>
 
 #if __has_include(<esp_chip_info.h>)
@@ -270,9 +270,8 @@ bool saveConfigToSD() {
     return false;
   }
 
-  // On the CYD the SD card and TFT share one physical SPI bus. In Core mode
-  // (PIG_FEAT_CORE_ISO) the UI flush on core 1 and the SD-log task on core 0 also
-  // use it, so a config write here must hold the shared-bus lock or it collides and
+  // In Core mode (PIG_FEAT_CORE_ISO) the SD-log task on core 0 writes to the card
+  // concurrently, so a config write here must hold the SD lock or it collides and
   // the save silently fails (settings then don't persist across reboots). The lock
   // is a no-op when PIG_FEAT_CORE_ISO is off, so there's no change on other builds.
   spiBusLock();

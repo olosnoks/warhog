@@ -35,7 +35,7 @@ All default to `0` (legacy behavior) in the headers; the per-board
 | `PIG_FEAT_DEDUP` | 1 | worker BSSID dedup | every mesh node |
 | `PIG_FEAT_ADAPTIVE_DWELL` | 2 | 50 ms active fast dwell + DFS passive | every mesh node |
 | `PIG_FEAT_DYNAMIC_ASSIGN` | 3 | yield-weighted channel assignment (ADMIN_EXT) | Core (warhog_fork, CYD/W550) |
-| `PIG_FEAT_CORE_ISO` | 4 | per-record SD logging on a core-0 FreeRTOS task (dual-core S3) behind the shared SD/TFT SPI-bus mutex | warhog_fork, CYD/W550 |
+| `PIG_FEAT_CORE_ISO` | 4 | per-record SD logging on a core-0 FreeRTOS task (dual-core S3) behind a cross-core SD mutex | warhog_fork, CYD/W550 |
 
 > **Note:** `PIG_FEAT_CORE_ISO` is dual-core threading. Its ON path was flipped
 > on by owner decision; validate SD-queue depth/drops (`[CORE-ISO] SD store q:`)

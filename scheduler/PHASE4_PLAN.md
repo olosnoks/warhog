@@ -8,8 +8,9 @@ UI/GNSS/upload tasks) turned out **unnecessary** — Steps 1+5 already decouple 
 path. What remains is ≥12-node scale confirmation (the user's real ceiling; see the
 Adaptive-Scheduler wiki). The plan below is kept as the design record and the hazards
 reference. Note: on the two current CYD build envs SD and TFT are **not** on one SPI
-bus (freenove = SDIO SD, guition = RGB TFT), so the `SpiBusLock` mutex is defensive
-prep for the shared-bus ILI9341 variant it was written for.
+bus (freenove = SDIO SD, guition = RGB TFT), and no shared-bus board is planned. The
+`SpiBusLock` mutex earns its keep as a cross-core SD lock (core-0 `tStore` vs core-1
+file moves / config saves); its use in `ScreenUI::present()` is defensive only.
 
 The original gating guidance still holds for any further task split: it is a threading
 rewrite whose correctness is only knowable by load-testing a multi-node mesh; do it on

@@ -43,7 +43,8 @@ wired into `openLogFile()`. The **XIAO C5 Core** and **T-Dongle C5** already car
 ### SD card format
 64 GB cards usually ship **exFAT**, but the ESP32 SD stack wants **FAT32** — if logging
 silently fails, check the format first. On the CYD the SD is 4-bit SDIO; on the Guition/C5
-it's SPI (and on the CYD it shares the SPI bus with the TFT — see
+it's SPI. Neither S3 board shares the SD bus with its TFT; Core-mode SD access across
+cores is serialized by `SpiBusLock` (see
 [Adaptive Scheduler → Phase 4](Adaptive-Scheduler.md#phase-4--core-isolation)).
 
 ## Raw PCAP logging

@@ -10,7 +10,7 @@ same way regardless of hardware.
 
 | Board | Driver | Notes |
 |---|---|---|
-| Freenove S3 CYD | TFT_eSPI (ILI9341, SPI) | shares the SPI bus with the SD card |
+| Freenove S3 CYD | TFT_eSPI (ILI9341, SPI) | SPI 10–13; the SD card is on its own SDIO bus |
 | Guition JC8048W550 | LovyanGFX (800×480 RGB) | renders to a RAM sprite, then scale-blits |
 | XIAO C5 / WarHogNode C3 | SSD1306 OLED (I²C) | small monochrome |
 | T-Dongle C5 | ST7735 color TFT | + APA102 status LED |
@@ -29,9 +29,10 @@ A page-based touch UI. Key entry points:
 - Serial-testable hooks: `triggerHomeUpload()`, `triggerCoreMode()`, `triggerRadioIdle()`
   (mirror the `u` / `c` / `o` serial commands — see [Serial & Telemetry](Serial-and-Telemetry.md)).
 
-> On the CYD the Core screen is drawn from inside `coreModeTick`, i.e. it's a second writer
-> on the shared SPI bus; that's why moving UI rendering to another core is treated as risky
-> and why `present()` takes the `SpiBusLock` mutex when core isolation is on.
+> `present()` takes the `SpiBusLock` mutex when core isolation is on. That's defensive only:
+> neither S3 board puts the TFT and SD card on one SPI bus (see
+> [Adaptive Scheduler → Phase 4](Adaptive-Scheduler.md#phase-4--core-isolation)); the lock's
+> real job is serializing SD access between the core-0 log task and core-1 SD users.
 
 ## Color themes (`cfg.theme`)
 The S3 UI palette is 11 runtime tokens (`g_theme` in `ScreenUI.cpp`) — background, card,

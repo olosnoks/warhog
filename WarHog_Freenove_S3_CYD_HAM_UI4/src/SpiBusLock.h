@@ -1,12 +1,14 @@
 #pragma once
 // ================================================================
-//  Scheduler Phase 4 (Step 1, CYD) — shared SPI-bus lock.
-//  On the Freenove S3 CYD the SD card and the ILI9341 TFT share ONE physical
-//  SPI bus (pins 10-13; sdSpi(HSPI) is a separate *driver instance* on the
-//  *same wires*). Once Core-mode SD logging moves to a core-0 task, the TFT
-//  flush on core 1 (ScreenUI::present / getTouch) and the SD write on core 0
-//  can collide on the bus. This recursive mutex serializes every shared-bus
-//  access so the two cores never drive the wires at once.
+//  Scheduler Phase 4 (Step 1, CYD) — cross-core SD access lock.
+//  Once Core-mode SD logging moves to a core-0 task (tStore), core-1 SD users
+//  (upload file moves, config saves, mesh-profile load/save) can run a
+//  multi-step SD sequence while that task writes. This recursive mutex
+//  serializes every SD access across the two cores.
+//  Neither S3 board puts the SD card and the TFT on one SPI bus (Freenove:
+//  ILI9341 on SPI 10-13, SD on 4-bit SDIO 38-48; W550: RGB panel, SD on SPI
+//  10-13), so ScreenUI::present() taking it is purely defensive; it would only
+//  matter on a board where the two genuinely share wires.
 //  Flag-gated PIG_FEAT_CORE_ISO: OFF (default) -> lock/unlock compile to
 //  no-ops, zero behavior change. The mutex itself is created in MeshNode
 //  coreStoreStart() (before the SD task can run) and lives for the session.

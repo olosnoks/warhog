@@ -21,7 +21,7 @@ flag's ON path gets its own test TU (`test_dwell_on.cpp`, `test_pair_on.cpp`).
 | `PIG_FEAT_DEDUP` | 1 | worker-side BSSID dedup |
 | `PIG_FEAT_ADAPTIVE_DWELL` | 2 | two-pass sweep: fast active, then yield-weighted passive revisits; DFS passive |
 | `PIG_FEAT_DYNAMIC_ASSIGN` | 3 | Core yield-weighted channel assignment (`PIG_MSG_ADMIN_EXT`) |
-| `PIG_FEAT_CORE_ISO` | 4 (Steps 1+5) | SD logging **and** the ESP-NOW record drain each on a core-0 task + SPI-bus mutex |
+| `PIG_FEAT_CORE_ISO` | 4 (Steps 1+5) | SD logging **and** the ESP-NOW record drain each on a core-0 task + cross-core SD mutex |
 | `PIG_FEAT_PAIR_SCHED` | 5 | per-channel dwell table + complementary antenna-pair assignment + overlap metric |
 
 > Precedence: `PIG_FEAT_PAIR_SCHED` overrides Phases 2/3 at the `pig_scan_plan()` /
@@ -60,12 +60,13 @@ Acceptance target (DESIGN §13): **0 RX deadline misses, RX jitter < 5 ms, at �
   to **core 0** (`tStore`), fed by a 48-deep lossy `xQueue`; the loop keeps draining
   ESP-NOW. `tStore`, the UI's `present()`, and upload-time file moves (`moveToFolder`,
   run on core 1 via `WigleUpload`/`WebUI`, guarded by a `SpiBusGuard` RAII scope) all
-  take the `SpiBusLock.h` recursive mutex so they can't drive the bus at once.
-  **Board reality:** the mutex was written for the ILI9341-SPI-TFT CYD variant where SD
-  and the TFT literally share pins 10–13. On the two current build envs they don't — the
-  **freenove** uses SDIO SD (separate pins) and the **guition W550** an RGB (parallel) TFT
-  — so the only real same-bus contenders there are `tStore` and `moveToFolder`, both SPI-SD
-  writers on the guition. `PIG_FEAT_CORE_ISO` ships ON for both CYD envs, so the lock is live.
+  take the `SpiBusLock.h` recursive mutex, as do config and mesh-profile saves/loads.
+  **Board reality:** neither S3 board puts the SD card and TFT on one SPI bus — the
+  **freenove** has its ILI9341 on SPI 10–13 and SD on 4-bit SDIO (38–48), the **guition
+  W550** has an RGB (parallel) TFT and SD on SPI 10–13 — and no shared-bus board is
+  planned. So the mutex is effectively a **cross-core SD lock**: it stops core-1 SD users
+  (`moveToFolder`, config/profile writes) interleaving with `tStore` on core 0. Its use in
+  `present()` is defensive only. `PIG_FEAT_CORE_ISO` ships ON for both CYD envs, so the lock is live.
 - **Step 5 — RX-drain isolation:** the `coreTextBuf` drain (parse + SD-enqueue) moves onto
   a second core-0 task (`tRxDrain`); the phone-app mirror + UI telemetry are handed back to
   the loop via a `coreMirrorBuf` SPSC ring so NimBLE/UI state stays single-core.

@@ -16,7 +16,7 @@
 #include "pig_dedup.h"   // Scheduler Phase 1: shared worker dedup (flag PIG_FEAT_DEDUP, default OFF)
 #include "pig_dwell.h"   // Scheduler Phase 2: adaptive dwell + DFS passive (flag PIG_FEAT_ADAPTIVE_DWELL, default OFF)
 #include "pig_proto.h"   // Scheduler Phase 3: PIG_MSG_ADMIN_EXT explicit channel list (worker parse)
-#include "SpiBusLock.h"  // Scheduler Phase 4: recursive mutex for the shared SD+TFT SPI bus
+#include "SpiBusLock.h"  // Scheduler Phase 4: recursive mutex serializing cross-core SD access
 #include "esp_heap_caps.h"
 #include "mbedtls/sha256.h"   // OTA: whole-image SHA-256 sent to the node in OTA_BEGIN
 
@@ -26,9 +26,9 @@
 //  core 1), so the RT path (ESP-NOW RX ring drain + reassignment in
 //  coreModeTick) keeps running on core 1 while the SD write proceeds in
 //  parallel on core 0. Unlike the single-core C5, the S3 is dual-core, so this
-//  is a real parallel offload. The SD card and TFT share one SPI bus here, so
-//  the task takes gSpiBusMutex (SpiBusLock.h) around the write and
-//  ScreenUI::present()/getTouch take the same mutex on core 1. Flag-gated
+//  is a real parallel offload. The task takes gSpiBusMutex (SpiBusLock.h)
+//  around the write, and every core-1 SD user (file moves, config/profile
+//  saves) takes the same mutex, so the two cores never interleave SD access. Flag-gated
 //  PIG_FEAT_CORE_ISO (default OFF -> inline write, no task, no mutex,
 //  byte-identical). Lossy queue: drops newest on overflow rather than blocking.
 // ================================================================
@@ -40,7 +40,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-SemaphoreHandle_t gSpiBusMutex = nullptr;   // shared SD+TFT SPI bus (SpiBusLock.h)
+SemaphoreHandle_t gSpiBusMutex = nullptr;   // cross-core SD access lock (SpiBusLock.h)
 struct PigLogRec {
   char   mac[20], ssid[34], auth[20], ts[28];
   int16_t ch; int8_t rssi; double lat, lon, alt, acc;
@@ -81,7 +81,7 @@ static void tStore(void*) {
   PigLogRec r;
   while (gStoreRun) {
     if (xQueueReceive(gLogQ, &r, pdMS_TO_TICKS(20)) == pdTRUE) {
-      spiBusLock();   // SD + TFT share the SPI bus on this board
+      spiBusLock();   // core-1 SD users take the same lock
       appendWigleRow(String(r.mac), String(r.ssid), String(r.auth), String(r.ts),
                      r.ch, r.rssi, r.lat, r.lon, r.alt, r.acc);
       spiBusUnlock();
@@ -1267,8 +1267,8 @@ static void meshProfilesLoad() {
   memset(meshProfiles, 0, sizeof(meshProfiles));
   meshProfilesLoaded = true;
   if (!sdOk) return;
-  // SD + TFT share one SPI bus; hold the lock or the read collides with the
-  // display flush / SD-log task and silently returns nothing.
+  // Hold the SD lock or the read collides with the core-0 SD-log task and
+  // silently returns nothing.
   spiBusLock();
   if (!SD.exists(MESH_PROFILE_PATH)) { spiBusUnlock(); return; }
   SdReader f(MESH_PROFILE_PATH);       // DMA-safe read (see SDUtils.h)

@@ -336,7 +336,7 @@ void ScreenUI::begin() {
 }
 
 void ScreenUI::present() {
-  spiBusLock();   // serialize the display flush against the core-0 SD task (shared SPI bus)
+  spiBusLock();   // defensive: no current board shares the TFT and SD bus (see SpiBusLock.h)
 #if defined(BOARD_W550)
   // The UI renders into a 240x320 portrait sprite. Scale it x1.5 to 360x480 and
   // center it on the 800x480 landscape panel. Phase 2 (native landscape layout)

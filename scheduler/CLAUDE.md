@@ -105,8 +105,9 @@ internal heap, not threading, was the binding constraint on the S3 Core.
   USB = 303A:1001. No-reset serial monitor: `$TEMP/readport.py` (dtr/rts=False).
 - No `gh` CLI here. Open PRs / dispatch workflows via the GitHub REST API with the
   git credential token: `printf "protocol=https\nhost=github.com\n\n" | git credential fill`.
-- CYD SD + ILI9341 TFT share the SAME physical SPI pins (10–13); `sdSpi(HSPI)` is a
-  separate driver on the same wires → that's why `CORE_ISO` needs `SpiBusLock.h`.
-  CYD touch is I2C (FT6336), off that bus.
+- Neither S3 board shares an SD+TFT SPI bus: Freenove = ILI9341 on SPI 10–13, SD on
+  4-bit SDIO 38–48; Guition W550 = RGB panel, SD on SPI 10–13. `SpiBusLock.h` is
+  really a cross-core SD lock (core-0 `tStore` vs core-1 moves/config saves); the
+  lock in `ScreenUI::present()` is defensive only. Touch is I2C on both.
 - The CYD's 64 GB SD card: 64 GB cards usually ship **exFAT** but the ESP32 SD stack
   wants **FAT32** — confirm the format before chasing an SD firmware bug.
