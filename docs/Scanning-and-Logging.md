@@ -26,7 +26,7 @@ Rows are written to `/logs/WiGLE_<rand>_<id>.csv` with the standard WiGLE header
 - Path safety: `normalizeSdPath`, `isAllowedDataPath`, and `moveToUploaded` keep writes and
   post-upload archival inside the allowed `/logs` and `/uploaded` trees.
 
-### SD bus recovery (Guition W550)
+### SD bus recovery
 After sustained heavy SPI SD I/O the bus can wedge, so `SD.open()`/`SD.exists()` fail even
 though the card is intact. On the **Guition W550** (SPI SD), `sdBeginBestClock()` mounts at
 the fastest stable clock on a descending ladder (20→16→12→8→4→1 MHz) and `sdTryRecover()`
@@ -36,7 +36,9 @@ reboot). Recovery is invoked on `openLogFile()` open-failure and on a `moveToFol
 same mechanism with an SDIO-flavoured ladder: the clock is the `SD_MMC.begin()`
 `maxClkFreqKHz` argument (20000→16000→8000→4000→1000 kHz), and recovery remounts one rung
 slower via `SD_MMC.end()` then re-`setPins`/`begin()`. Both CYD backends now self-heal a
-wedged bus.
+wedged bus. The **Waveshare C6** (shared SPI SD) has the same guard: its `initSD_SharedSPI()`
+already remounts across a clock ladder, so `sdTryRecover()` is a rate-limited re-invocation,
+wired into `openLogFile()`. The **XIAO C5 Core** and **T-Dongle C5** already carried this.
 
 ### SD card format
 64 GB cards usually ship **exFAT**, but the ESP32 SD stack wants **FAT32** — if logging

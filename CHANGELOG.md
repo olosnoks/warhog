@@ -18,6 +18,10 @@ the base firmware history.
   - **Freenove CYD** (4-bit SD_MMC): SDIO ladder via `SD_MMC.begin()`
     `maxClkFreqKHz` 20000→16000→8000→4000→1000 kHz; recovery is `SD_MMC.end()`
     then re-`setPins`/`begin()` slower.
+  - **Waveshare C6** (shared SPI SD): its `initSD_SharedSPI()` already remounts
+    across a clock ladder, so `sdTryRecover()` rate-limits a re-invocation and is
+    wired into `openLogFile()`. The XIAO C5 Core and T-Dongle C5 already had this,
+    so every SD-logging board now self-heals a wedged bus.
 
 ### Pre-merge CI gate + drop-in header drift guard
 - **CI now runs before merge, not just on deploy.** A new workflow

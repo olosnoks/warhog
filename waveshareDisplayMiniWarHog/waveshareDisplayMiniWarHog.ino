@@ -677,6 +677,10 @@ static bool openLogFile() {
   Serial.println(currentCsvPath);
   digitalWrite(PINS.tft_cs, HIGH);  // ensure TFT is not listening during SD transactions
   logFile = SD.open(currentCsvPath, FILE_WRITE);
+  if (!logFile && sdTryRecover()) {     // wedged bus: remount, then retry once
+    digitalWrite(PINS.tft_cs, HIGH);
+    logFile = SD.open(currentCsvPath, FILE_WRITE);
+  }
   if (!logFile) {
     Serial.println("[SD] Failed to open log file for write");
     return false;
@@ -1937,6 +1941,22 @@ static bool initSD_SharedSPI() {
 
   Serial.println("[SD] All attempts failed.");
   return false;
+}
+
+// ---- SD bus recovery ----
+// After sustained heavy SD I/O the shared SPI bus can wedge, so SD.open() fails
+// even though the card is intact. initSD_SharedSPI() already does a full
+// SPI.end()+remount across a clock ladder, so recovery is just a rate-limited
+// re-invocation (matches the sdTryRecover() the Core/CYD/T-Dongle builds use).
+static bool sdTryRecover() {
+  static uint32_t lastMs = 0;
+  uint32_t now = millis();
+  if (now - lastMs < 4000) return false;   // don't hammer a dead card
+  lastMs = now;
+  Serial.println("[SD] Attempting SD bus recovery (re-init shared SPI)...");
+  sdOk = initSD_SharedSPI();
+  Serial.printf("[SD] Recovery %s\n", sdOk ? "OK" : "FAILED");
+  return sdOk;
 }
 
 static void forceStatusFullRedraw() {
